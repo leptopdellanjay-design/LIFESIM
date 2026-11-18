@@ -1,0 +1,220 @@
+import type { LifeEvent } from '../../types/game';
+
+const fictional = true;
+
+export const educationCareerEvents: LifeEvent[] = [
+  {
+    id: 'education-academic-warning',
+    title: 'Hasil semester perlu perhatian',
+    description: 'Nilai semester terakhir belum memenuhi batas yang diharapkan. Kamu masih dapat mengubah kebiasaan belajar untuk semester berikutnya.',
+    category: 'education',
+    minAge: 17,
+    maxAge: 60,
+    educationStatusRequirements: ['enrolled'],
+    academicStandingRequirements: ['warning', 'probation'],
+    probability: 0.8,
+    cooldownYears: 3,
+    fictional,
+    choices: [
+      {
+        id: 'focus-study',
+        label: 'Mengatur waktu belajar lebih teratur',
+        description: 'Pilih intensitas belajar fokus untuk periode berikutnya.',
+        consequence: {
+          studyEffortChange: 'focused',
+          statChanges: { energy: -2, happiness: -1 },
+          historyText: 'Menata ulang jadwal dan memusatkan perhatian pada studi.',
+        },
+      },
+      {
+        id: 'balanced-study',
+        label: 'Menjaga ritme yang seimbang',
+        description: 'Pilih intensitas belajar seimbang dan jaga waktu istirahat.',
+        consequence: {
+          studyEffortChange: 'balanced',
+          statChanges: { health: 1, energy: 1 },
+          historyText: 'Memilih ritme belajar yang lebih seimbang.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'education-research-recognition',
+    title: 'Pengakuan atas kontribusi akademik',
+    description: 'Karya dan kontribusimu dalam bidang ilmu mendapat perhatian dari komunitas akademik. Sebuah lembaga fiktif menawarkan penghargaan kehormatan.',
+    category: 'education',
+    minAge: 30,
+    maxAge: 85,
+    educationRequirement: ['s3'],
+    educationStatusRequirements: ['completed'],
+    statRequirements: { reputation: { min: 70 } },
+    probability: 0.08,
+    cooldownYears: 1,
+    once: true,
+    fictional,
+    choices: [
+      {
+        id: 'accept-honorary-degree',
+        label: 'Menerima gelar kehormatan',
+        description: 'Mencatat pengakuan tersebut sebagai bagian dari perjalanan akademik.',
+        consequence: {
+          honoraryDegreesAdded: [{
+            id: 'honorary-doctorate-simulation',
+            title: 'Doktor Kehormatan atas Kontribusi Ilmu',
+            abbreviation: 'Dr. H.C.',
+            institutionId: 'universitas-nusantara-maju',
+            year: 0,
+            citation: 'Diberikan atas kontribusi akademik dalam simulasi.',
+          }],
+          statChanges: { reputation: 3, happiness: 2 },
+          historyText: 'Menerima gelar doktor kehormatan fiktif atas kontribusi akademik.',
+        },
+      },
+      {
+        id: 'decline-honorary-degree',
+        label: 'Menolak dengan hormat',
+        description: 'Memilih untuk tetap berfokus pada pekerjaan dan penelitian.',
+        consequence: {
+          statChanges: { happiness: 1 },
+          historyText: 'Menolak gelar kehormatan dan memilih melanjutkan kegiatan akademik.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'career-promotion-review',
+    title: 'Kesempatan naik jabatan',
+    description: 'Pengalaman dan hasil kerjamu memenuhi syarat untuk dipertimbangkan pada posisi berikutnya.',
+    category: 'career',
+    minAge: 22,
+    maxAge: 69,
+    occupationRequirement: 'employed',
+    careerRequirements: { requiresAvailablePromotion: true },
+    probability: 0.32,
+    cooldownYears: 3,
+    fictional,
+    choices: [
+      {
+        id: 'accept-promotion',
+        label: 'Menerima tanggung jawab baru',
+        description: 'Maju ke jenjang jabatan berikutnya dengan penyesuaian gaji.',
+        consequence: {
+          careerChange: { type: 'promote' },
+          statChanges: { reputation: 2, happiness: 1, energy: -2 },
+          historyText: 'Menerima promosi dan tanggung jawab baru.',
+        },
+      },
+      {
+        id: 'defer-promotion',
+        label: 'Menunda promosi',
+        description: 'Tetap pada posisi sekarang untuk menjaga keseimbangan hidup.',
+        consequence: {
+          statChanges: { happiness: 1, energy: 1 },
+          historyText: 'Menunda promosi untuk mempertahankan keseimbangan kerja dan hidup.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'career-salary-review',
+    title: 'Evaluasi gaji tahunan',
+    description: 'Kamu memiliki kesempatan membicarakan kompensasi berdasarkan pengalaman dan hasil kerja tahun ini.',
+    category: 'career',
+    minAge: 20,
+    maxAge: 68,
+    occupationRequirement: 'employed',
+    careerRequirements: { minExperienceYears: 1, minSatisfaction: 40 },
+    probability: 0.22,
+    cooldownYears: 4,
+    fictional,
+    choices: [
+      {
+        id: 'negotiate-raise',
+        label: 'Mengajukan kenaikan yang wajar',
+        description: 'Menyampaikan hasil kerja sebagai dasar permintaan.',
+        consequence: {
+          careerChange: { type: 'raise', percent: 0.06 },
+          statChanges: { reputation: 1, energy: -1 },
+          historyText: 'Mengajukan evaluasi gaji dan memperoleh kenaikan simulasi.',
+        },
+      },
+      {
+        id: 'keep-current',
+        label: 'Mempertahankan kesepakatan saat ini',
+        description: 'Fokus pada pengembangan pengalaman terlebih dahulu.',
+        consequence: {
+          statChanges: { happiness: 1 },
+          historyText: 'Memilih melanjutkan pekerjaan dengan kesepakatan saat ini.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'career-workplace-restructuring',
+    title: 'Perubahan struktur tempat kerja',
+    description: 'Tempat kerjamu sedang menata ulang beberapa tim. Perubahan ini membawa ketidakpastian, tetapi juga membuka ruang untuk menyampaikan pilihan.',
+    category: 'career',
+    minAge: 20,
+    maxAge: 68,
+    occupationRequirement: 'employed',
+    probability: 0.07,
+    cooldownYears: 8,
+    once: true,
+    fictional,
+    choices: [
+      {
+        id: 'stay-through-change',
+        label: 'Bertahan dan beradaptasi',
+        description: 'Tetap bekerja sambil menunggu kejelasan pembagian tugas.',
+        consequence: {
+          statChanges: { energy: -2, intelligence: 1 },
+          historyText: 'Bertahan menghadapi perubahan struktur kerja.',
+        },
+      },
+      {
+        id: 'accept-severance',
+        label: 'Menerima pemutusan kerja',
+        description: 'Mengakhiri pekerjaan dan menerima bantuan transisi simulasi.',
+        consequence: {
+          careerChange: { type: 'layoff' },
+          cashChange: 1_000_000,
+          historyText: 'Mengalami pemutusan kerja dan menerima bantuan transisi.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'career-training-opportunity',
+    title: 'Pelatihan pengembangan profesi',
+    description: 'Tempat kerja menawarkan pelatihan singkat yang memerlukan biaya dan waktu, tetapi dapat membantu memperluas kemampuanmu.',
+    category: 'career',
+    minAge: 20,
+    maxAge: 66,
+    occupationRequirement: 'employed',
+    minCash: 250_000,
+    probability: 0.18,
+    cooldownYears: 5,
+    fictional,
+    choices: [
+      {
+        id: 'attend-training',
+        label: 'Mengikuti pelatihan',
+        description: 'Membayar biaya kegiatan dan mengurangi waktu luang.',
+        requirements: { minCash: 250_000 },
+        consequence: {
+          cashChange: -250_000,
+          statChanges: { intelligence: 2, reputation: 1, energy: -1 },
+          historyText: 'Mengikuti pelatihan untuk mengembangkan keterampilan kerja.',
+        },
+      },
+      {
+        id: 'skip-training',
+        label: 'Melewatkan kesempatan kali ini',
+        description: 'Mengutamakan kebutuhan dan kegiatan yang sedang berjalan.',
+        consequence: {
+          historyText: 'Melewatkan pelatihan profesi tahun ini.',
+        },
+      },
+    ],
+  },
+];
