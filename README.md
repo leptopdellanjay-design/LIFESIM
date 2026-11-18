@@ -21,6 +21,11 @@ npm test
 npm run build
 ```
 
+## Deployment GitHub Pages
+- Workflow `.github/workflows/deploy.yml` menjalankan seluruh tes dan membuat build Vite untuk repository `LIFESIM` setiap ada push ke `main`.
+- Untuk deployment, buka **Settings → Pages → Build and deployment → Source**, lalu pilih **GitHub Actions**. Workflow mengunggah folder `dist` dan menerbitkan hasilnya ke GitHub Pages.
+- Build lokal biasa memakai root path. Mode `github-pages` membangun aset dengan base `/LIFESIM/`.
+
 ## Fitur saat ini
 - Pembuatan karakter bertahap dengan validasi identitas, tanggal dan lokasi lahir, latar ekonomi, keluarga, serta kepribadian.
 - Statistik awal, keluarga, dan aset diturunkan dari pilihan pemain; peristiwa kelahiran dicatat dan memengaruhi kebahagiaan awal.
