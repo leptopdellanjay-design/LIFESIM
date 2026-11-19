@@ -3,8 +3,9 @@ import type {
   EventProgress,
   LifeEvent,
 } from '../types/game';
-import { processAnnualEconomy } from './careerEconomyEngine';
-import { simulateEducationYear } from './educationEngine';
+import { getBirthdayMonth, getNextCalendarDate } from './calendar';
+import { processMonthlyEconomy } from './careerEconomyEngine';
+import { simulateEducationMonth } from './educationEngine';
 import {
   consumePendingEvent,
   createEmptyEventProgress,
@@ -13,8 +14,10 @@ import {
 } from './eventEngine';
 import { getLifeStage } from './lifeStages';
 import { processFamilyYear } from './familyEngine';
+import { settleEstateOnDeath } from './successionEngine';
+import { processDigitalLifeMonth } from './digitalLifeEngine';
 
-export interface AnnualSimulationResult {
+export interface MonthlySimulationResult {
   character: Character;
   activeEvent: LifeEvent | null;
   eventProgress: EventProgress;
@@ -89,53 +92,78 @@ function getAnnualDeathRisk(character: Character): number {
   return Math.min(0.85, baseRisk + healthRisk);
 }
 
-export function simulateYear(
+export function simulateMonth(
   character: Character,
   eventProgress: EventProgress = createEmptyEventProgress(),
   random: () => number = Math.random,
-): AnnualSimulationResult {
+): MonthlySimulationResult {
   if (character.status !== 'alive') {
     return { character, activeEvent: null, eventProgress, historyEntries: [] };
   }
 
+  const previousMonth = character.currentMonth ?? 1;
+  const nextDate = getNextCalendarDate(character.currentYear, previousMonth);
+  const isBirthday = nextDate.month === getBirthdayMonth(character.birthInformation.date);
+  const isNewYear = nextDate.month === 1;
   const previousStage = getLifeStage(character.age);
   let nextCharacter: Character = {
     ...character,
-    age: character.age + 1,
-    currentYear: character.currentYear + 1,
-    lastYearIncome: 0,
-    lastYearExpenses: 0,
+    age: character.age + (isBirthday ? 1 : 0),
+    currentYear: nextDate.year,
+    currentMonth: nextDate.month,
+    lastYearIncome: nextDate.year !== character.currentYear ? 0 : character.lastYearIncome,
+    lastYearExpenses: nextDate.year !== character.currentYear ? 0 : character.lastYearExpenses,
   };
-  nextCharacter = developStats(nextCharacter);
-  nextCharacter = developFamilyRelationships(nextCharacter);
-  const education = simulateEducationYear(nextCharacter, random);
-  nextCharacter = education.character;
-  const economy = processAnnualEconomy(nextCharacter);
-  nextCharacter = economy.character;
-  const delayed = processPendingConsequences(nextCharacter, eventProgress);
-  nextCharacter = delayed.character;
-  let nextEventProgress = delayed.eventProgress;
-  const familyYear = processFamilyYear(
-    nextCharacter,
-    createFamilyYearRandom(nextCharacter.id, nextCharacter.currentYear),
-  );
-  nextCharacter = familyYear.character;
-
-  const stage = getLifeStage(nextCharacter.age);
-  const historyEntries = [
-    `${nextCharacter.currentYear}: Bertambah usia menjadi ${nextCharacter.age} tahun — ${stage.label}.`,
-  ];
-  if (previousStage.id !== stage.id) {
-    historyEntries.push(`${nextCharacter.currentYear}: Memasuki tahap ${stage.label.toLowerCase()}.`);
+  const historyEntries: string[] = [];
+  if (isBirthday) {
+    nextCharacter = developStats(nextCharacter);
+    nextCharacter = developFamilyRelationships(nextCharacter);
+    const stage = getLifeStage(nextCharacter.age);
+    historyEntries.push(
+      `${nextCharacter.currentYear}-${String(nextCharacter.currentMonth).padStart(2, '0')}: Bertambah usia menjadi ${nextCharacter.age} tahun — ${stage.label}.`,
+    );
+    if (previousStage.id !== stage.id) {
+      historyEntries.push(`${nextCharacter.currentYear}: Memasuki tahap ${stage.label.toLowerCase()}.`);
+    }
   }
-  historyEntries.push(...education.historyEntries);
-  historyEntries.push(...economy.historyEntries);
-  historyEntries.push(...delayed.historyEntries);
-  historyEntries.push(...familyYear.historyEntries);
+
+  const education = simulateEducationMonth(nextCharacter, nextDate.month, isBirthday, random);
+  nextCharacter = education.character;
+  const economy = processMonthlyEconomy(nextCharacter, nextDate.month, random);
+  nextCharacter = economy.character;
+  const digitalLife = processDigitalLifeMonth(nextCharacter);
+  nextCharacter = digitalLife.character;
+  if (nextDate.month === 12) {
+    const annualBalance = nextCharacter.lastYearIncome - nextCharacter.lastYearExpenses;
+    const wealthChange = annualBalance > 0 ? 1 : annualBalance < 0 ? -1 : 0;
+    nextCharacter = {
+      ...nextCharacter,
+      stats: {
+        ...nextCharacter.stats,
+        wealth: clampStat(nextCharacter.stats.wealth + wealthChange),
+      },
+    };
+  }
+  let nextEventProgress = eventProgress;
+  historyEntries.push(...education.historyEntries, ...economy.historyEntries, ...digitalLife.historyEntries);
+
+  if (isNewYear) {
+    const delayed = processPendingConsequences(nextCharacter, nextEventProgress);
+    nextCharacter = delayed.character;
+    nextEventProgress = delayed.eventProgress;
+    historyEntries.push(...delayed.historyEntries);
+    const familyYear = processFamilyYear(
+      nextCharacter,
+      createFamilyYearRandom(nextCharacter.id, nextCharacter.currentYear),
+    );
+    nextCharacter = familyYear.character;
+    historyEntries.push(...familyYear.historyEntries);
+  }
 
   const deathRoll = random();
   const safeDeathRoll = Number.isFinite(deathRoll) ? Math.max(0, Math.min(0.999999999, deathRoll)) : 0.5;
-  if (safeDeathRoll < getAnnualDeathRisk(nextCharacter)) {
+  const monthlyDeathRisk = 1 - ((1 - getAnnualDeathRisk(nextCharacter)) ** (1 / 12));
+  if (safeDeathRoll < monthlyDeathRisk) {
     const cause = nextCharacter.stats.health <= 25
       ? 'Komplikasi kesehatan dalam simulasi'
       : 'Penyebab alami dalam simulasi';
@@ -145,9 +173,13 @@ export function simulateYear(
       deathRecord: {
         age: nextCharacter.age,
         year: nextCharacter.currentYear,
+        month: nextCharacter.currentMonth,
         cause,
       },
     };
+    const settlement = settleEstateOnDeath(nextCharacter);
+    nextCharacter = settlement.character;
+    historyEntries.push(...settlement.historyEntries);
     historyEntries.push(
       `${nextCharacter.currentYear}: Kehidupan berakhir pada usia ${nextCharacter.age}. Penyebab: ${cause}.`,
     );
@@ -161,7 +193,14 @@ export function simulateYear(
 
   const activeEvent = selectLifeEvent(nextCharacter, nextEventProgress, random);
   if (activeEvent) {
-    historyEntries.push(`${nextCharacter.currentYear}: Kejadian tersedia — ${activeEvent.title}.`);
+    const momentLabel = activeEvent.calendarMomentType === 'national'
+      ? 'Momen nasional'
+      : activeEvent.calendarMomentType === 'annual'
+        ? 'Momen tahunan'
+        : 'Momen acak';
+    historyEntries.push(
+      `${nextCharacter.currentYear}-${String(nextCharacter.currentMonth).padStart(2, '0')}: ${momentLabel} tersedia — ${activeEvent.title}.`,
+    );
     nextEventProgress = consumePendingEvent(nextEventProgress, activeEvent.id);
   }
 

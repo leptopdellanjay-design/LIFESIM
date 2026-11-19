@@ -4,13 +4,24 @@ import { scholarshipEvent } from '../data/events/scholarship';
 import { createEducationRecordFromLegacy } from '../engine/educationEngine';
 import type { CharacterDraft } from '../types/game';
 import type { PersistedGame } from '../persistence/gameDatabase';
-import { createActiveGameIfAbsent, loadActiveGame, saveActiveGame } from '../persistence/gameSave';
+import {
+  createActiveGameIfAbsent,
+  getPreferredSaveSlotId,
+  listSavedGames,
+  loadActiveGame,
+  saveActiveGame,
+} from '../persistence/gameSave';
 import { useGameStore } from './gameStore';
 
 vi.mock('../persistence/gameSave', () => ({
+  DEFAULT_SAVE_SLOT_ID: 'active',
   createActiveGameIfAbsent: vi.fn(),
+  getPreferredSaveSlotId: vi.fn(),
+  importGameBackup: vi.fn(),
+  listSavedGames: vi.fn(),
   loadActiveGame: vi.fn(),
   saveActiveGame: vi.fn(),
+  setPreferredSaveSlotId: vi.fn(),
 }));
 
 const draft: CharacterDraft = {
@@ -55,6 +66,8 @@ function persistedGame(character = newCharacter()): PersistedGame {
 describe('game progression and persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getPreferredSaveSlotId).mockResolvedValue('active');
+    vi.mocked(listSavedGames).mockResolvedValue([]);
     vi.mocked(loadActiveGame).mockResolvedValue(undefined);
     vi.mocked(createActiveGameIfAbsent).mockResolvedValue(true);
     vi.mocked(saveActiveGame).mockResolvedValue();
@@ -133,18 +146,45 @@ describe('game progression and persistence', () => {
     expect(useGameStore.getState().character?.id).toBe(existing.character.id);
   });
 
-  it('advances age and simulation year while autosaving', async () => {
+  it('advances one calendar month while autosaving', async () => {
     await useGameStore.getState().hydrate();
     await useGameStore.getState().startLife(newCharacter());
-    const initialYear = useGameStore.getState().character?.currentYear;
+    const initialCharacter = useGameStore.getState().character!;
+
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(true);
+
+    expect(useGameStore.getState().character?.currentYear).toBe(initialCharacter.currentYear);
+    expect(useGameStore.getState().character?.currentMonth).toBe(initialCharacter.currentMonth + 1);
+    expect(useGameStore.getState().character?.age).toBe(0);
+    expect(saveActiveGame).toHaveBeenCalled();
+  });
+
+  it('resumes a one-year run after scheduled events until all twelve months are processed', async () => {
+    await useGameStore.getState().hydrate();
+    await useGameStore.getState().startLife(newCharacter());
+    const character = useGameStore.getState().character!;
+    useGameStore.setState({
+      character: { ...character, age: 30, currentYear: 2025, currentMonth: 12 },
+    });
 
     expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(true);
+    expect(useGameStore.getState().character?.currentMonth).toBe(1);
+    expect(useGameStore.getState().activeEvent?.id).toBe('calendar-new-year');
+    expect(useGameStore.getState().eventProgress.yearAdvanceRemaining).toBe(11);
 
-    expect(useGameStore.getState().character?.currentYear).toBe(initialYear! + 1);
-    expect(useGameStore.getState().character?.age).toBe(1);
-    const history = useGameStore.getState().history;
-    expect(history[history.length - 1]).toContain('Bertambah usia menjadi 1 tahun');
-    expect(saveActiveGame).toHaveBeenCalled();
+    expect(await useGameStore.getState().chooseEventChoice('new-year-health')).toBe(true);
+    expect(useGameStore.getState().eventProgress.yearAdvanceRemaining).toBe(11);
+    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(true);
+    expect(useGameStore.getState().character?.currentMonth).toBe(8);
+    expect(useGameStore.getState().activeEvent?.id).toBe('calendar-independence-day');
+    expect(useGameStore.getState().eventProgress.yearAdvanceRemaining).toBe(4);
+
+    expect(await useGameStore.getState().chooseEventChoice('independence-rest')).toBe(true);
+    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(true);
+    expect(useGameStore.getState().character?.currentYear).toBe(2026);
+    expect(useGameStore.getState().character?.currentMonth).toBe(12);
+    expect(useGameStore.getState().activeEvent?.id).toBe('calendar-year-end');
+    expect(useGameStore.getState().eventProgress.yearAdvanceRemaining).toBeUndefined();
   });
 
   it('creates and saves social relationships while blocking interaction during an active event', async () => {
@@ -208,13 +248,13 @@ describe('game progression and persistence', () => {
     useGameStore.setState({ activeEvent: scholarshipEvent });
     const initialCash = useGameStore.getState().character!.cash;
 
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(false);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(false);
     expect(await useGameStore.getState().chooseEventChoice('work')).toBe(true);
     expect(useGameStore.getState().character?.cash).toBe(initialCash);
     expect(useGameStore.getState().character?.careerRecord.status).toBe('employed');
     expect(useGameStore.getState().activeEvent).toBeNull();
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(true);
-    expect(useGameStore.getState().character?.age).toBe(19);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(true);
+    expect(useGameStore.getState().character?.age).toBe(18);
     expect(useGameStore.getState().character?.lastYearIncome).toBeGreaterThan(0);
     expect(useGameStore.getState().eventProgress.completedEventIds).toContain(scholarshipEvent.id);
     expect(useGameStore.getState().eventProgress.history[0].choiceId).toBe('work');
@@ -312,7 +352,7 @@ describe('game progression and persistence', () => {
     const initialHistory = useGameStore.getState().history;
     vi.mocked(saveActiveGame).mockRejectedValue(new Error('IndexedDB unavailable'));
 
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(false);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(false);
     expect(useGameStore.getState().character?.age).toBe(0);
     expect(useGameStore.getState().character?.currentYear).toBe(2000);
     expect(useGameStore.getState().history).toEqual(initialHistory);
@@ -329,13 +369,13 @@ describe('game progression and persistence', () => {
       finishSave = resolve;
     }));
 
-    const firstAdvance = useGameStore.getState().advanceYear(() => 0.99);
+    const firstAdvance = useGameStore.getState().advanceMonth(() => 0.99);
     expect(useGameStore.getState().isAdvancing).toBe(true);
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(false);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(false);
     finishSave?.();
 
     expect(await firstAdvance).toBe(true);
-    expect(useGameStore.getState().character?.age).toBe(1);
+    expect(useGameStore.getState().character?.age).toBe(0);
     expect(saveActiveGame).toHaveBeenCalledOnce();
   });
 
@@ -346,7 +386,7 @@ describe('game progression and persistence', () => {
     useGameStore.setState({ character: { ...character, status: 'deceased' } });
     const initialHistory = useGameStore.getState().history;
 
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(false);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(false);
     expect(useGameStore.getState().character?.age).toBe(0);
     expect(useGameStore.getState().history).toEqual(initialHistory);
   });
@@ -355,13 +395,13 @@ describe('game progression and persistence', () => {
     await useGameStore.getState().hydrate();
     await useGameStore.getState().startLife(newCharacter());
 
-    expect(await useGameStore.getState().advanceYear(() => 0)).toBe(true);
+    expect(await useGameStore.getState().advanceMonth(() => 0)).toBe(true);
     const deceased = useGameStore.getState().character!;
     expect(deceased.status).toBe('deceased');
-    expect(deceased.deathRecord?.age).toBe(1);
-    expect(deceased.deathRecord?.year).toBe(2001);
+    expect(deceased.deathRecord?.age).toBe(0);
+    expect(deceased.deathRecord?.year).toBe(2000);
     expect(useGameStore.getState().history.some((entry) => entry.includes('Kehidupan berakhir'))).toBe(true);
-    expect(await useGameStore.getState().advanceYear(() => 0.99)).toBe(false);
-    expect(useGameStore.getState().character?.age).toBe(1);
+    expect(await useGameStore.getState().advanceMonth(() => 0.99)).toBe(false);
+    expect(useGameStore.getState().character?.age).toBe(0);
   });
 });

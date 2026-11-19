@@ -35,6 +35,18 @@ describe('applyConsequence', () => {
     expect(result.cash).toBe(character.cash + 25000);
     expect(result.netWorth).toBe(character.netWorth + 25000);
     expect(result.stats.wealth).toBe(character.stats.wealth);
+    expect(result.lastYearIncome).toBe(character.lastYearIncome + 25000);
+  });
+
+  it('records event spending in the current year expense total', () => {
+    const result = applyConsequence(character, {
+      cashChange: -25_000,
+      statChanges: { happiness: 1 },
+      historyText: 'Mengeluarkan biaya untuk kegiatan.',
+    });
+
+    expect(result.cash).toBe(character.cash - 25_000);
+    expect(result.lastYearExpenses).toBe(character.lastYearExpenses + 25_000);
   });
 
   it('clamps stats between 0 and 100', () => {

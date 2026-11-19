@@ -8,6 +8,8 @@ export interface FamilyBackgroundDefinition {
   opportunityLabel: string;
   cashBase: number;
   nonCashBase: number;
+  parentSalaryRange: [number, number];
+  monthlySupportRate: number;
   housingCondition: HousingCondition;
   facilities: string[];
   opportunityLevel: OpportunityLevel;
@@ -22,6 +24,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Terbatas',
     cashBase: 60_000,
     nonCashBase: 0,
+    parentSalaryRange: [0, 4_000_000],
+    monthlySupportRate: 0.025,
     housingCondition: 'temporary',
     facilities: ['Kebutuhan dasar terbatas'],
     opportunityLevel: 'limited',
@@ -34,6 +38,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Terbatas',
     cashBase: 150_000,
     nonCashBase: 20_000_000,
+    parentSalaryRange: [3_000_000, 5_500_000],
+    monthlySupportRate: 0.04,
     housingCondition: 'basic',
     facilities: ['Fasilitas rumah dasar'],
     opportunityLevel: 'limited',
@@ -46,6 +52,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Dasar',
     cashBase: 400_000,
     nonCashBase: 90_000_000,
+    parentSalaryRange: [3_500_000, 7_000_000],
+    monthlySupportRate: 0.055,
     housingCondition: 'modest',
     facilities: ['Listrik', 'Air bersih'],
     opportunityLevel: 'basic',
@@ -58,6 +66,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Berkembang',
     cashBase: 1_200_000,
     nonCashBase: 300_000_000,
+    parentSalaryRange: [4_500_000, 8_500_000],
+    monthlySupportRate: 0.075,
     housingCondition: 'comfortable',
     facilities: ['Listrik', 'Air bersih', 'Akses pendidikan'],
     opportunityLevel: 'growing',
@@ -70,6 +80,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Luas',
     cashBase: 3_000_000,
     nonCashBase: 1_000_000_000,
+    parentSalaryRange: [6_000_000, 14_000_000],
+    monthlySupportRate: 0.095,
     housingCondition: 'large',
     facilities: ['Listrik', 'Air bersih', 'Akses pendidikan', 'Kendaraan keluarga'],
     opportunityLevel: 'broad',
@@ -82,6 +94,8 @@ export const familyBackgrounds: FamilyBackgroundDefinition[] = [
     opportunityLabel: 'Luas',
     cashBase: 8_000_000,
     nonCashBase: 3_000_000_000,
+    parentSalaryRange: [8_000_000, 14_000_000],
+    monthlySupportRate: 0.12,
     housingCondition: 'large',
     facilities: ['Listrik', 'Air bersih', 'Akses pendidikan', 'Kendaraan keluarga', 'Ruang belajar'],
     opportunityLevel: 'broad',

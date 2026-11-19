@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { familyBackgrounds } from '../data/familyBackgrounds';
+import { getOccupation } from '../data/careerCatalog';
 import { getCities, getProvinces, isSupportedLocation } from '../data/locations';
 import { CharacterDraftError, createCharacter, initialCharacterDraft, validateCharacterDraft } from './characterCreation';
+import { getMonthlyParentalSupport } from './familySupport';
 import { adjustEventWeightForPersonality, getNominalPriceFactor, getWorldYearContext } from './worldEra';
 import type { CharacterDraft } from '../types/game';
 
@@ -85,6 +87,51 @@ describe('character creation validation', () => {
       }
     }
     expect(created[5].stats.wealth).toBeLessThan(100);
+  });
+
+  it('assigns parent jobs within each family tier and calculates support by income and parent status', () => {
+    const characters = familyBackgrounds.map((background) => createCharacter(
+      validDraft({ familyBackground: background.id }),
+      { today, random: () => 0.5 },
+    ));
+
+    for (const character of characters) {
+      const { parentSalaryRange } = familyBackgrounds.find(
+        (background) => background.id === character.familyBackground.tier,
+      )!;
+      for (const parent of character.family.members.filter((member) => (
+        (member.role === 'father' || member.role === 'mother') && member.status === 'alive'
+      ))) {
+        const salary = getOccupation(parent.occupationId ?? null)?.monthlySalary;
+        expect(salary).toBeGreaterThanOrEqual(parentSalaryRange[0]);
+        expect(salary).toBeLessThanOrEqual(parentSalaryRange[1]);
+      }
+    }
+
+    const twoParents = characters.find((character) => character.familyBackground.tier === 'middle')!;
+    const oneParent = createCharacter(validDraft({
+      familyBackground: 'middle',
+      parentCondition: 'father_only',
+    }), { today, random: () => 0.5 });
+    expect(getMonthlyParentalSupport(twoParents)).toBeGreaterThan(
+      getMonthlyParentalSupport(oneParent),
+    );
+    expect(getMonthlyParentalSupport(characters[5])).toBeGreaterThan(
+      getMonthlyParentalSupport(characters[0]),
+    );
+    expect(oneParent.family.members.find((member) => member.role === 'mother')?.occupationId).toBeNull();
+    expect(getMonthlyParentalSupport({ ...twoParents, age: 18 })).toBe(0);
+    expect(getMonthlyParentalSupport({
+      ...twoParents,
+      family: {
+        ...twoParents.family,
+        members: twoParents.family.members.map((member) => (
+          member.role === 'father' || member.role === 'mother'
+            ? { ...member, status: 'deceased' as const }
+            : member
+        )),
+      },
+    })).toBe(0);
   });
 
   it('scales starting resources by the birth year without changing the currency', () => {

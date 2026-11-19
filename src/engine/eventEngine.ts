@@ -31,6 +31,7 @@ export function createEmptyEventProgress(): EventProgress {
   return {
     completedEventIds: [],
     lastEventYears: {},
+    lastEventMonths: {},
     history: [],
     pendingEventIds: [],
     pendingConsequences: [],
@@ -43,12 +44,13 @@ function isEligible(
   character: Character,
   progress: EventProgress,
 ): boolean {
-  const { age, currentYear, birthInformation, stats, family } = character;
+  const { age, currentYear, currentMonth, birthInformation, stats, family } = character;
   const location = birthInformation.location;
   const educationRecord = character.educationRecord;
   if (age < event.minAge || age > event.maxAge) return false;
   if (event.minYear !== undefined && currentYear < event.minYear) return false;
   if (event.maxYear !== undefined && currentYear > event.maxYear) return false;
+  if (event.calendarMonth !== undefined && event.calendarMonth !== currentMonth) return false;
   if (event.countryCode && event.countryCode !== location.countryCode) return false;
   if (event.province && event.province !== location.province) return false;
   if (event.city && event.city !== location.city) return false;
@@ -106,6 +108,14 @@ function isEligible(
   const lastYear = progress.lastEventYears[event.id];
   if (lastYear !== undefined
     && currentYear - lastYear < (event.cooldownYears ?? 0)) return false;
+  if (event.cooldownMonths !== undefined) {
+    const currentMonthIndex = currentYear * 12 + currentMonth;
+    const lastMonthIndex = progress.lastEventMonths?.[event.id] ?? (
+      lastYear === undefined ? undefined : lastYear * 12
+    );
+    if (lastMonthIndex !== undefined
+      && currentMonthIndex - lastMonthIndex < event.cooldownMonths) return false;
+  }
 
   if (event.statRequirements && Object.entries(event.statRequirements).some(([key, range]) => {
     const value = stats[key as keyof typeof stats];
@@ -151,18 +161,30 @@ export function selectLifeEvent(
 ): LifeEvent | null {
   const eligible = events.filter((event) => isEligible(event, character, progress));
   const queued = eligible.filter((event) => progress.pendingEventIds.includes(event.id));
+  const scheduled = eligible.filter((event) => (
+    event.calendarMonth === character.currentMonth && event.calendarMomentType
+  ));
   const pool = queued.length > 0
     ? queued
-    : eligible.filter((event) => !event.followUpOnly);
-  const candidates = pool.filter((event) => {
-    if (queued.includes(event)) return true;
-    const probability = Math.max(0, Math.min(1, event.probability ?? 0.25));
-    const weight = getEventWeight(event, character);
-    return randomUnit(random) < Math.min(1, probability * weight);
-  });
-  if (candidates.length === 0) return null;
+    : scheduled.length > 0
+      ? scheduled
+      : eligible.filter((event) => !event.followUpOnly);
+  if (pool.length === 0) return null;
 
-  const weighted = candidates.map((event) => ({ event, weight: getEventWeight(event, character) }));
+  if (queued.length === 0 && scheduled.length === 0) {
+    const annualProbability = Math.min(1, Math.max(...pool.map((event) => (
+      Math.max(0, Math.min(1, event.probability ?? 0.25))
+        * getEventWeight(event, character)
+    ))));
+    const monthlyProbability = 1 - ((1 - annualProbability) ** (1 / 12));
+    if (randomUnit(random) >= monthlyProbability) return null;
+  }
+
+  const weighted = pool.map((event) => ({
+    event,
+    weight: getEventWeight(event, character)
+      * Math.max(0.01, Math.min(1, event.probability ?? 0.25)),
+  }));
   const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
   if (totalWeight <= 0) return null;
 
@@ -223,13 +245,14 @@ export function recordEventChoice(
   choiceId: string,
   year: number,
   age: number,
+  month = 1,
 ): EventProgress {
   const choice = event.choices.find((item) => item.id === choiceId);
   if (!choice) return progress;
 
   const pendingConsequences = [...progress.pendingConsequences];
   for (const delayed of choice.consequence.delayedConsequences ?? []) {
-    const id = `${year}:${event.id}:${choice.id}:${delayed.id}`;
+    const id = `${year}-${month}:${event.id}:${choice.id}:${delayed.id}`;
     if (progress.processedConsequenceIds.includes(id)
       || pendingConsequences.some((item) => item.id === id)) continue;
     pendingConsequences.push({
@@ -250,6 +273,10 @@ export function recordEventChoice(
       ? [...new Set([...progress.completedEventIds, event.id])]
       : progress.completedEventIds,
     lastEventYears: { ...progress.lastEventYears, [event.id]: year },
+    lastEventMonths: {
+      ...progress.lastEventMonths,
+      [event.id]: year * 12 + month,
+    },
     history: [
       ...progress.history,
       {
@@ -257,6 +284,7 @@ export function recordEventChoice(
         title: event.title,
         category: event.category,
         year,
+        month,
         age,
         choiceId,
         choiceLabel: choice.label,

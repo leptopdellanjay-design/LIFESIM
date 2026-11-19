@@ -158,9 +158,10 @@ export function applyConsequence(
 
   const incomeChange = finite(consequence.incomeChange);
   const expensesChange = finite(consequence.expensesChange);
+  const cashChange = finite(consequence.cashChange);
   const cash = nonNegative(
     character.cash
-      + finite(consequence.cashChange)
+      + cashChange
       + incomeChange
       - expensesChange,
   );
@@ -280,8 +281,8 @@ export function applyConsequence(
     debt,
     cash,
     netWorth,
-    lastYearIncome: nonNegative(character.lastYearIncome + incomeChange),
-    lastYearExpenses: nonNegative(character.lastYearExpenses + expensesChange),
+    lastYearIncome: nonNegative(character.lastYearIncome + incomeChange + Math.max(0, cashChange)),
+    lastYearExpenses: nonNegative(character.lastYearExpenses + expensesChange + Math.max(0, -cashChange)),
     educationRecord,
     maritalStatus,
     spouseName: 'spouseName' in consequence

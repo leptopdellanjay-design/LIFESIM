@@ -1,9 +1,11 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { ArrowRight, Check, ChevronLeft, ChevronRight } from 'lucide-react';
-import { CharacterDraftError, createCharacter, initialCharacterDraft, validateCharacterDraft } from '../engine/characterCreation';
+import { CharacterDraftError, createCharacter, createCharacterId, initialCharacterDraft, validateCharacterDraft } from '../engine/characterCreation';
 import { getFamilyBackground, familyBackgrounds } from '../data/familyBackgrounds';
 import { getCities, getProvinces, supportedCountries } from '../data/locations';
+import { getMonthlyParentalSupport } from '../engine/familySupport';
 import { getWorldYearContext } from '../engine/worldEra';
+import { getOccupation } from '../data/careerCatalog';
 import { useGameStore } from '../store/gameStore';
 import type {
   AvatarId,
@@ -110,7 +112,9 @@ export function CharacterCreation() {
   const [errors, setErrors] = useState<Partial<Record<keyof CharacterDraft, string>>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
   const startLife = useGameStore((state) => state.startLife);
+  const importGameBackup = useGameStore((state) => state.importGameBackup);
   const persistenceError = useGameStore((state) => state.persistenceError);
   const hydrate = useGameStore((state) => state.hydrate);
   const provinces = getProvinces(draft.countryCode);
@@ -150,7 +154,9 @@ export function CharacterCreation() {
 
     setIsStarting(true);
     try {
-      const character = createCharacter(draft);
+      const character = preview
+        ? { ...preview, id: createCharacterId() }
+        : createCharacter(draft);
       const started = await startLife(character);
       const state = useGameStore.getState();
       if (!started && !state.character && state.persistenceStatus !== 'error') {
@@ -164,6 +170,21 @@ export function CharacterCreation() {
       } else {
         setFormError(error instanceof Error ? error.message : String(error));
       }
+    }
+  };
+
+  const restoreBackup = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      window.alert('Ukuran file cadangan maksimal 10 MB.');
+      return;
+    }
+    setIsImportingBackup(true);
+    try {
+      await importGameBackup(await file.text());
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsImportingBackup(false);
     }
   };
 
@@ -184,6 +205,23 @@ export function CharacterCreation() {
       </header>
 
       <section className="creation-card" aria-labelledby="creation-title">
+        <div className="restore-backup-row">
+          <span>Sudah memiliki file cadangan?</span>
+          <label className={`secondary-button backup-import-button${isImportingBackup ? ' is-disabled' : ''}`} htmlFor="creation-backup-file">
+            {isImportingBackup ? 'Memulihkan…' : 'Pulihkan cerita'}
+            <input
+              id="creation-backup-file"
+              type="file"
+              accept="application/json,.json"
+              disabled={isImportingBackup}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) void restoreBackup(file);
+                event.currentTarget.value = '';
+              }}
+            />
+          </label>
+        </div>
         <div className="creation-heading">
           <span className="eyebrow">PEMBUATAN KARAKTER</span>
           <h1 id="creation-title">{step === 5 ? 'Periksa ceritamu' : 'Ciptakan karakter'}</h1>
@@ -377,8 +415,13 @@ export function CharacterCreation() {
                   <div className="confirmation-block">
                     <div className="confirmation-block-heading"><h3>Keluarga dan ekonomi</h3><button type="button" onClick={() => setStep(2)}>Ubah keluarga</button></div>
                     <p>{chosenBackground?.label} · Tinggal {preview.family.livingArrangement === 'with_parents' ? 'bersama kedua orang tua' : preview.family.livingArrangement === 'with_parent' ? 'bersama orang tua yang masih hidup' : 'bersama wali keluarga'}.</p>
-                    <p className="asset-list">{preview.family.members.map((member) => `${member.name}: ${memberStatusLabels[member.status]}`).join(' · ')}</p>
+                    <p className="asset-list">{preview.family.members.map((member) => {
+                      const occupation = getOccupation(member.occupationId ?? null);
+                      const occupationLabel = occupation ? ` · bekerja sebagai ${occupation.name}` : '';
+                      return `${member.name}: ${memberStatusLabels[member.status]}${occupationLabel}`;
+                    }).join(' · ')}</p>
                     <p>{preview.family.members.filter((member) => member.role === 'sibling').length} saudara · {chosenBackground?.housingLabel} · Peluang {chosenBackground?.opportunityLabel}</p>
+                    <p className="asset-list">Kiriman orang tua saat masih di bawah 18 tahun: {formatMoney(getMonthlyParentalSupport(preview), currencyCode)} per bulan.</p>
                     <p className="asset-list">Fasilitas awal: {preview.startingAssets.facilities.join(', ')}.</p>
                     <p className="asset-list">Uang tunai {formatMoney(preview.cash, currencyCode)} · Kekayaan bersih {formatMoney(preview.netWorth, currencyCode)}.</p>
                   </div>

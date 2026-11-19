@@ -7,6 +7,7 @@ import type {
   SocialRelationship,
 } from '../types/game';
 import type { CharacterActionResult } from './relationshipEngine';
+import { randomParentOccupationId } from './familySupport';
 import { getNominalPriceFactor } from './worldEra';
 
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
@@ -181,9 +182,11 @@ export function createChild(
     id: childId,
     name: cleanName,
     birthYear: character.currentYear,
+    gender: 'other',
     relationship: 65,
     trust: 65,
     loyalty: 60,
+    inheritanceCash: 0,
     health: 80,
     happiness: 65,
     intelligence: clamp(35 + character.stats.intelligence * 0.35),
@@ -194,7 +197,7 @@ export function createChild(
     deathYear: null,
     adopted,
     parentIds: [character.id, spouse.id],
-    generation: 1,
+    generation: character.generation + 1,
     history: [adopted
       ? `${character.currentYear}: Bergabung dengan keluarga melalui proses adopsi.`
       : `${character.currentYear}: Lahir dan menjadi bagian keluarga.`],
@@ -350,8 +353,12 @@ export function processFamilyYear(
   };
 }
 
-export function normalizeFamilyRecords(character: Character): Character {
+export function normalizeFamilyRecords(
+  character: Character,
+  random: () => number = Math.random,
+): Character {
   const birthYear = Number(character.birthInformation.date.slice(0, 4));
+  const backgroundTier = character.familyBackground?.tier ?? 'modest';
   const members = (character.family?.members ?? []).map((member) => ({
     ...member,
     trust: member.trust ?? member.relationship,
@@ -365,7 +372,11 @@ export function normalizeFamilyRecords(character: Character): Character {
     estateCash: member.estateCash ?? 0,
     netWorth: member.netWorth ?? member.estateCash ?? 0,
     educationLevel: member.educationLevel ?? 'none',
-    occupationId: member.occupationId ?? null,
+    occupationId: member.occupationId ?? (
+      (member.role === 'father' || member.role === 'mother') && member.status === 'alive'
+        ? randomParentOccupationId(backgroundTier, random)
+        : null
+    ),
     personality: member.personality ?? { traits: [] },
     history: member.history ?? [],
   }));
@@ -406,6 +417,7 @@ export function normalizeFamilyRecords(character: Character): Character {
   });
   const children = (character.children ?? []).map((child) => ({
     ...child,
+    gender: child.gender ?? 'other',
     trust: child.trust ?? child.relationship,
     loyalty: child.loyalty ?? child.relationship,
     health: child.health ?? 75,
@@ -417,12 +429,21 @@ export function normalizeFamilyRecords(character: Character): Character {
     lifeStatus: child.lifeStatus ?? 'alive',
     deathYear: child.deathYear ?? null,
     adopted: child.adopted ?? false,
+    inheritanceCash: child.inheritanceCash ?? 0,
     history: child.history ?? [],
     parentIds: child.parentIds ?? [character.id],
     generation: child.generation ?? 1,
   }));
   return {
     ...character,
+    generation: character.generation ?? 0,
+    ancestors: character.ancestors ?? [],
+    estatePlan: character.estatePlan ?? {
+      distribution: 'equal_heirs',
+      namedHeirId: null,
+      updatedYear: character.currentYear,
+    },
+    estateSettlement: character.estateSettlement ?? null,
     family: { ...character.family, members: familyTree },
     relationships,
     children,

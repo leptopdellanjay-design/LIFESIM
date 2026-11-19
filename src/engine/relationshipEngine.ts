@@ -483,6 +483,20 @@ export function endRelationship(character: Character, relationshipId: string): C
 
 export function getCurrentSpouse(character: Character): SocialRelationship | undefined {
   return character.relationships.find((item) => (
-    item.stage === 'married' && item.status === 'active' && item.profile?.lifeStatus !== 'deceased'
+    item.stage === 'married'
+    && item.status !== 'ended'
+    && item.profile?.lifeStatus !== 'deceased'
   ));
+}
+
+export function getVisibleRelationships(character: Character): SocialRelationship[] {
+  const spouse = getCurrentSpouse(character);
+  return character.relationships
+    .filter((item) => item.kind !== 'child'
+      && item.status !== 'ended'
+      && item.stage !== 'ended'
+      && item.stage !== 'separated')
+    .sort((first, second) => (
+      Number(second.id === spouse?.id) - Number(first.id === spouse?.id)
+    ));
 }

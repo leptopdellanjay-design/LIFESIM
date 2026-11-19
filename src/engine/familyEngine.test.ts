@@ -197,4 +197,25 @@ describe('family engine', () => {
     expect(normalized.children[0].trust).toBe(60);
     expect(normalized.family.members.find((member) => member.role === 'father')?.birthYear).toBe(1950);
   });
+
+  it('fills missing parent occupations when restoring an older family save', () => {
+    const character = makeCharacter();
+    const legacy = {
+      ...character,
+      family: {
+        ...character.family,
+        members: character.family.members.map((member) => (
+          member.role === 'father' || member.role === 'mother'
+            ? { ...member, occupationId: null }
+            : member
+        )),
+      },
+    };
+    const restored = normalizeFamilyRecords(legacy, () => 0);
+
+    expect(restored.family.members.find((member) => member.role === 'father')?.occupationId)
+      .toBeTruthy();
+    expect(restored.family.members.find((member) => member.role === 'mother')?.occupationId)
+      .toBeTruthy();
+  });
 });

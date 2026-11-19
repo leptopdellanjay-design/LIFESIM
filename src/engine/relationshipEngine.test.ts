@@ -3,6 +3,7 @@ import { createCharacter, initialCharacterDraft } from './characterCreation';
 import {
   askToDate,
   divorcePartner,
+  getVisibleRelationships,
   interactWithFamilyMember,
   interactWithRelationship,
   marryPartner,
@@ -86,8 +87,29 @@ describe('relationship engine', () => {
     expect(result.character.maritalStatus).toBe('separated');
     expect(result.character.spouseName).toBeNull();
     expect(result.character.relationships[0].stage).toBe('separated');
+    expect(getVisibleRelationships(result.character)).toEqual([]);
     expect(result.character.cash).toBeLessThan(character.cash);
     expect(result.historyText).toContain('penyelesaian aset');
+  });
+
+  it('hides ended relationships and keeps a current spouse at the top', () => {
+    const met = meetNewPerson(makeAdultCharacter(), () => 0.1)!;
+    const friendId = met.character.relationships[0].id;
+    const ended = interactWithRelationship(met.character, friendId, 'end')!;
+    expect(getVisibleRelationships(ended.character)).toEqual([]);
+
+    let married = askToDate(met.character, friendId, () => 0.1)!.character;
+    for (let index = 0; index < 5; index += 1) {
+      married = interactWithRelationship(married, friendId, 'talk')!.character;
+    }
+    married = proposeEngagement(married, friendId, () => 0.1)!.character;
+    married = marryPartner(married, friendId, 'simple')!.character;
+    const withFriend = meetNewPerson(married, () => 0.2)!.character;
+    const visible = getVisibleRelationships(withFriend);
+
+    expect(visible[0].id).toBe(friendId);
+    expect(visible[0].stage).toBe('married');
+    expect(visible).toHaveLength(2);
   });
 
   it('changes family ties through real interaction records', () => {

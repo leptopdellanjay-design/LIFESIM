@@ -22,6 +22,13 @@ export interface AnnualCareerResult {
   historyEntries: string[];
 }
 
+export interface MonthlyCareerResult {
+  character: Character;
+  income: number;
+  expenses: number;
+  historyEntries: string[];
+}
+
 function appendCareerHistory(
   record: CareerRecord,
   entry: CareerHistoryEntry,
@@ -486,4 +493,98 @@ export function processAnnualCareer(character: Character): AnnualCareerResult {
     expenses,
     historyEntries: [`${character.currentYear}: Bekerja sebagai ${occupation.name}; pengalaman kerja bertambah.`],
   };
+}
+
+export function processMonthlyCareer(
+  character: Character,
+  month: number,
+): MonthlyCareerResult {
+  const record = character.careerRecord;
+  const occupation = getOccupation(record.currentOccupationId);
+  const economyRecord = character.economyRecord;
+  const configuredBudget = economyRecord?.budgetConfigured
+    ? Object.values(economyRecord.monthlyBudget ?? {}).reduce(
+      (total, amount) => total + (Number.isFinite(amount) ? Math.max(0, amount) : 0),
+      0,
+    ) * (
+      getNominalPriceFactor(character.currentYear)
+      / getNominalPriceFactor(economyRecord.monthlyBudgetYear ?? character.currentYear)
+    )
+    : null;
+  const budgetScale = economyRecord?.budgetConfigured
+    ? getNominalPriceFactor(character.currentYear)
+      / getNominalPriceFactor(economyRecord.monthlyBudgetYear ?? character.currentYear)
+    : 1;
+  const income = record.status === 'employed' && occupation
+    ? Math.max(0, Math.round(record.monthlySalary))
+    : 0;
+  const country = educationCountries[character.birthInformation.location.countryCode];
+  const tax = Math.round(income * (country?.taxRate ?? 0));
+  const livingExpenses = Math.round(configuredBudget ?? income * 0.48);
+  const expenses = tax + livingExpenses;
+  const netChange = income - expenses;
+  const historyEntries: string[] = [];
+  let careerRecord = record;
+  const stats = { ...character.stats };
+
+  if (month % 3 === 0 && occupation && record.status === 'employed') {
+    if (occupation.workHoursPerWeek > 40) stats.energy = Math.max(0, stats.energy - 1);
+    if (record.satisfaction >= 75) stats.happiness = Math.min(100, stats.happiness + 1);
+    if (record.satisfaction <= 30) stats.happiness = Math.max(0, stats.happiness - 1);
+  }
+  if (month % 3 === 0 && economyRecord?.budgetConfigured
+    && character.cash + income >= expenses) {
+    const budget = economyRecord.monthlyBudget;
+    if (budget.food + budget.health >= 250_000 * budgetScale) {
+      stats.health = Math.min(100, stats.health + 1);
+    }
+    if (budget.education >= 100_000 * budgetScale) {
+      stats.intelligence = Math.min(100, stats.intelligence + 1);
+    }
+    if (budget.leisure >= 100_000 * budgetScale) {
+      stats.happiness = Math.min(100, stats.happiness + 1);
+    }
+  }
+  if (month === 12) {
+    if (record.status === 'employed' && occupation) {
+      const nextSalary = Math.round(record.monthlySalary * 1.045);
+      careerRecord = appendCareerHistory({
+        ...record,
+        experienceYears: record.experienceYears + 1,
+        monthlySalary: nextSalary,
+        satisfaction: Math.max(0, Math.min(100, Math.round(record.satisfaction + (
+          character.stats.happiness - 50
+          + character.stats.energy - 50
+          + character.stats.health - 50
+        ) / 60))),
+        professionalReputation: Math.max(0, Math.min(100, record.professionalReputation + (
+          character.stats.reputation >= 60 ? 1 : 0
+        ))),
+      }, {
+        id: `annual-experience:${occupation.id}:${character.currentYear}`,
+        year: character.currentYear,
+        type: 'experience',
+        occupationId: occupation.id,
+        title: occupation.titles[record.positionIndex],
+        details: 'Pengalaman kerja bertambah satu tahun.',
+        monthlySalary: nextSalary,
+      });
+      historyEntries.push(`${character.currentYear}: Pengalaman kerja bertambah satu tahun.`);
+    }
+  }
+
+  const nextCharacter: Character = {
+    ...character,
+    cash: Math.max(0, character.cash + netChange),
+    netWorth: Math.max(0, character.netWorth + netChange),
+    lastYearIncome: Math.max(0, character.lastYearIncome + income),
+    lastYearExpenses: Math.max(0, character.lastYearExpenses + expenses),
+    careerRecord,
+    stats,
+  };
+  const date = `${character.currentYear}-${String(month).padStart(2, '0')}`;
+  if (income > 0) historyEntries.push(`${date}: Gaji ${income}, pajak dan pengeluaran ${expenses}.`);
+  else if (expenses > 0) historyEntries.push(`${date}: Pengeluaran rumah tangga ${expenses}.`);
+
+  return { character: nextCharacter, income, expenses, historyEntries };
 }

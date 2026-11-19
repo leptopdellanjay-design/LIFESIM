@@ -6,8 +6,10 @@ import {
   canReceivePromotion,
   createCareerRecordFromLegacy,
   processAnnualCareer,
+  processMonthlyCareer,
 } from './careerEngine';
 import { createEducationRecordFromLegacy } from './educationEngine';
+import { createInitialEconomyRecord } from './economyEngine';
 
 function makeQualifiedCharacter() {
   const character = createCharacter({
@@ -29,9 +31,9 @@ function makeQualifiedCharacter() {
     currentYear: 2020,
     educationRecord: createEducationRecordFromLegacy('Lulus Sekolah Menengah Atas', 2020),
     stats: {
-      health: 100,
-      happiness: 100,
-      intelligence: 100,
+      health: 80,
+      happiness: 80,
+      intelligence: 80,
       looks: 80,
       energy: 100,
       reputation: 100,
@@ -70,6 +72,34 @@ describe('career engine', () => {
     expect(active.lastYearExpenses).toBeGreaterThan(0);
     expect(active.careerRecord.experienceYears).toBe(2);
     expect(canReceivePromotion(active)).toBe(true);
+  });
+
+  it('charges a monthly budget and links funded categories to health, learning, and happiness', () => {
+    const character = {
+      ...makeQualifiedCharacter(),
+      careerRecord: createCareerRecordFromLegacy('Pekerja pemula', 2020),
+      economyRecord: {
+        ...createInitialEconomyRecord(),
+        budgetConfigured: true,
+        monthlyBudgetYear: 2020,
+        monthlyBudget: {
+          housing: 0,
+          food: 200_000,
+          transport: 0,
+          health: 100_000,
+          education: 100_000,
+          leisure: 100_000,
+        },
+      },
+    };
+    const result = processMonthlyCareer(character, 3);
+
+    expect(result.income).toBe(character.careerRecord.monthlySalary);
+    expect(result.expenses).toBeGreaterThan(500_000);
+    expect(result.character.lastYearExpenses).toBe(result.expenses);
+    expect(result.character.stats.health).toBe(character.stats.health + 1);
+    expect(result.character.stats.intelligence).toBe(character.stats.intelligence + 1);
+    expect(result.character.stats.happiness).toBe(character.stats.happiness + 1);
   });
 
   it('preserves legacy employment during a migration', () => {

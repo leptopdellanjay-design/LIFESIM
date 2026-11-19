@@ -3,7 +3,14 @@ import Dexie from 'dexie';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createCharacter, initialCharacterDraft } from '../engine/characterCreation';
 import { GameDatabase, gameDatabase } from './gameDatabase';
-import { createActiveGameIfAbsent, loadActiveGame, saveActiveGame } from './gameSave';
+import {
+  createActiveGameIfAbsent,
+  exportGameBackup,
+  importGameBackup,
+  listSavedGames,
+  loadActiveGame,
+  saveActiveGame,
+} from './gameSave';
 
 const character = createCharacter({
   ...initialCharacterDraft,
@@ -31,6 +38,7 @@ const eventProgress = {
 describe('IndexedDB game saves', () => {
   beforeEach(async () => {
     await gameDatabase.saves.clear();
+    await gameDatabase.settings.clear();
   });
 
   it('creates and reloads a complete game save', async () => {
@@ -89,6 +97,88 @@ describe('IndexedDB game saves', () => {
     expect(await gameDatabase.saves.count()).toBe(1);
   });
 
+  it('keeps independent save slots and restores a backup into the selected slot', async () => {
+    const game = {
+      character,
+      history: ['2020: Catatan cadangan.'],
+      activeEvent: null,
+      eventProgress,
+    };
+    await createActiveGameIfAbsent(game, 'slot-one');
+    await saveActiveGame({
+      ...game,
+      character: { ...character, age: 2, currentYear: 2022 },
+    }, 'slot-two');
+
+    const backup = await exportGameBackup('slot-one');
+    await importGameBackup(backup, 'slot-three');
+    const slots = await listSavedGames();
+
+    expect(await loadActiveGame('slot-one')).toMatchObject({ character: { age: character.age } });
+    expect(await loadActiveGame('slot-two')).toMatchObject({ character: { age: 2 } });
+    expect(await loadActiveGame('slot-three')).toMatchObject({
+      character: { id: 'indexeddb-character' },
+      history: ['2020: Catatan cadangan.'],
+    });
+    expect(slots.map((slot) => slot.id).sort()).toEqual(['slot-one', 'slot-three', 'slot-two']);
+  });
+
+  it('preserves a paused annual run through backup restore and rejects invalid remainder values', async () => {
+    await createActiveGameIfAbsent({
+      character,
+      history: ['2020: Catatan tahunan.'],
+      activeEvent: null,
+      eventProgress: { ...eventProgress, yearAdvanceRemaining: 7 },
+    }, 'slot-one');
+    const backup = await exportGameBackup('slot-one');
+    await importGameBackup(backup, 'slot-two');
+
+    expect((await loadActiveGame('slot-two'))?.eventProgress.yearAdvanceRemaining).toBe(7);
+    const malformed = {
+      ...JSON.parse(backup),
+      eventProgress: { ...eventProgress, yearAdvanceRemaining: 12 },
+    };
+    await expect(importGameBackup(JSON.stringify(malformed), 'slot-invalid'))
+      .rejects.toThrow('Struktur file cadangan tidak valid');
+  });
+
+  it('restores legacy backups without digital data into an initialized digital-life record', async () => {
+    await createActiveGameIfAbsent({
+      character,
+      history: ['2020: Catatan cadangan.'],
+      activeEvent: null,
+      eventProgress,
+    }, 'slot-one');
+    const backup = JSON.parse(await exportGameBackup('slot-one')) as {
+      character: Record<string, unknown>;
+    };
+    delete backup.character.digitalLife;
+
+    await importGameBackup(JSON.stringify(backup), 'slot-restored');
+
+    expect((await loadActiveGame('slot-restored'))?.character.digitalLife).toEqual({
+      smartphone: null,
+      accounts: [],
+      content: [],
+      transactions: [],
+    });
+  });
+
+  it('rejects malformed or unsupported backup files without changing saves', async () => {
+    await expect(importGameBackup('{not-json', 'slot-one')).rejects.toThrow('JSON yang valid');
+    await expect(importGameBackup('{"version":99}', 'slot-one')).rejects.toThrow('versinya tidak didukung');
+    await expect(importGameBackup(JSON.stringify({
+      id: 'broken',
+      version: 6,
+      character: {},
+      history: [],
+      activeEvent: null,
+      eventProgress: {},
+      updatedAt: 1,
+    }), 'slot-one')).rejects.toThrow('Struktur file cadangan tidak valid');
+    expect(await gameDatabase.saves.count()).toBe(0);
+  });
+
   it('migrates a version 1 save without discarding its life history', async () => {
     const name = `indolife-migration-${Date.now()}`;
     const legacyDatabase = new Dexie(name);
@@ -114,6 +204,12 @@ describe('IndexedDB game saves', () => {
     delete (legacyCharacter as Partial<typeof legacyCharacter>).educationRecord;
     delete (legacyCharacter as Partial<typeof legacyCharacter>).careerRecord;
     delete (legacyCharacter as Partial<typeof legacyCharacter>).economyRecord;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).generation;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).ancestors;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).estatePlan;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).estateSettlement;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).currentMonth;
+    delete (legacyCharacter as Partial<typeof legacyCharacter>).digitalLife;
     legacyCharacter.family.members.forEach((member) => {
       delete (member as Partial<typeof member>).trust;
       delete (member as Partial<typeof member>).loyalty;
@@ -142,10 +238,62 @@ describe('IndexedDB game saves', () => {
     expect(migrated?.character.debt).toBe(0);
     expect(migrated?.character.economyRecord.businesses).toEqual([]);
     expect(migrated?.character.economyRecord.monthlyBudgetYear).toBe(2026);
+    expect(migrated?.character.generation).toBe(0);
+    expect(migrated?.character.ancestors).toEqual([]);
+    expect(migrated?.character.estatePlan.distribution).toBe('equal_heirs');
+    expect(migrated?.character.estateSettlement).toBeNull();
+    expect(migrated?.character.currentMonth).toBe(1);
+    expect(migrated?.character.digitalLife).toEqual({
+      smartphone: null,
+      accounts: [],
+      content: [],
+      transactions: [],
+    });
+    expect(migrated?.eventProgress.lastEventMonths).toEqual({});
     expect(migrated?.character.family.members[0].trust).toBe(
       migrated?.character.family.members[0].relationship,
     );
     expect(migrated?.history).toEqual(['2020: Catatan lama tetap ada.']);
+    await migratedDatabase.delete();
+  });
+
+  it('assigns parent jobs when upgrading a version 9 save', async () => {
+    const name = `indolife-v9-migration-${Date.now()}`;
+    const legacyDatabase = new Dexie(name);
+    legacyDatabase.version(9).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    });
+    await legacyDatabase.open();
+    const legacyCharacter = {
+      ...character,
+      family: {
+        ...character.family,
+        members: character.family.members.map((member) => (
+          member.role === 'father' || member.role === 'mother'
+            ? { ...member, occupationId: null }
+            : member
+        )),
+      },
+    };
+    await legacyDatabase.table('saves').add({
+      id: 'active',
+      version: 6,
+      character: legacyCharacter,
+      history: ['2020: Catatan lama.'],
+      activeEvent: null,
+      eventProgress,
+      updatedAt: 1,
+    });
+    legacyDatabase.close();
+
+    const migratedDatabase = new GameDatabase(name);
+    const migrated = await migratedDatabase.saves.get('active');
+
+    expect(migrated?.character.family.members.find((member) => member.role === 'father')?.occupationId)
+      .toBeTruthy();
+    expect(migrated?.character.family.members.find((member) => member.role === 'mother')?.occupationId)
+      .toBeTruthy();
     await migratedDatabase.delete();
   });
 

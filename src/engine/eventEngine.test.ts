@@ -3,6 +3,7 @@ import { createCharacter, initialCharacterDraft } from './characterCreation';
 import { extendedLifeEvents } from '../data/events/extendedLifeEvents';
 import { lifeEventLibrary } from '../data/events';
 import { educationCareerEvents } from '../data/events/educationCareerEvents';
+import { calendarEvents } from '../data/events/calendarEvents';
 import { applyConsequence } from './consequenceEngine';
 import {
   createEmptyEventProgress,
@@ -56,16 +57,23 @@ function event(overrides: Partial<LifeEvent> = {}): LifeEvent {
 }
 
 describe('life event engine', () => {
-  it('provides at least 40 uniquely identified events across required categories', () => {
+  it('provides at least 50 uniquely identified events across required categories', () => {
     const ids = lifeEventLibrary.map((item) => item.id);
     const categories = new Set(lifeEventLibrary.map((item) => item.category));
 
-    expect(lifeEventLibrary.length).toBeGreaterThanOrEqual(40);
+    expect(lifeEventLibrary.length).toBeGreaterThanOrEqual(50);
     expect(new Set(ids).size).toBe(ids.length);
     for (const category of [
       'family', 'education', 'career', 'romance', 'friendship', 'finance',
       'health', 'crime', 'underworld', 'social', 'historical', 'random_life', 'death',
     ]) expect(categories.has(category)).toBe(true);
+  });
+
+  it('labels factual history events with a source instead of presenting fiction as fact', () => {
+    const factualEvents = lifeEventLibrary.filter((item) => item.historicalClassification === 'historical_fact');
+    expect(factualEvents.length).toBeGreaterThan(0);
+    expect(factualEvents.every((item) => Boolean(item.historicalSource))).toBe(true);
+    expect(lifeEventLibrary.every((item) => Boolean(item.historicalClassification))).toBe(true);
   });
 
   it('limits historical facts to their year and labels speculative future content', () => {
@@ -135,11 +143,13 @@ describe('life event engine', () => {
 
     expect(progress.completedEventIds).toEqual(['test-event']);
     expect(progress.lastEventYears).toEqual({ 'test-event': 2020 });
+    expect(progress.lastEventMonths).toEqual({ 'test-event': 2020 * 12 + 1 });
     expect(progress.history).toEqual([{
       eventId: 'test-event',
       title: 'Peristiwa uji',
       category: 'family',
       year: 2020,
+      month: 1,
       age: 20,
       choiceId: 'accept',
       choiceLabel: 'Terima',
@@ -166,13 +176,41 @@ describe('life event engine', () => {
     };
     const socialEvent = event({ probability: 0.4 });
 
-    expect(selectLifeEvent(friendly, createEmptyEventProgress(), () => 0.43, [socialEvent])?.id)
+    expect(selectLifeEvent(friendly, createEmptyEventProgress(), () => 0.04, [socialEvent])?.id)
       .toBe('test-event');
-    expect(selectLifeEvent(shy, createEmptyEventProgress(), () => 0.43, [socialEvent]))
+    expect(selectLifeEvent(shy, createEmptyEventProgress(), () => 0.04, [socialEvent]))
       .toBeNull();
     expect(selectLifeEvent(friendly, createEmptyEventProgress(), () => 0, [
       event({ probability: 0 }),
     ])).toBeNull();
+  });
+
+  it('offers the national August moment only in its calendar month and repeats yearly', () => {
+    const independenceDay = calendarEvents.find((item) => item.id === 'calendar-independence-day')!;
+    const august = { ...character, currentMonth: 8 };
+    const eventAtMoment = selectLifeEvent(august, createEmptyEventProgress(), () => 0.99, [independenceDay]);
+    expect(eventAtMoment?.id).toBe(independenceDay.id);
+
+    const progress = recordEventChoice(
+      createEmptyEventProgress(),
+      independenceDay,
+      independenceDay.choices[0].id,
+      2026,
+      august.age,
+      8,
+    );
+    expect(selectLifeEvent(
+      { ...august, currentYear: 2027 },
+      progress,
+      () => 0.99,
+      [independenceDay],
+    )?.id).toBe(independenceDay.id);
+    expect(selectLifeEvent(
+      { ...august, currentMonth: 9 },
+      progress,
+      () => 0.99,
+      [independenceDay],
+    )).toBeNull();
   });
 
   it('gates academic recognition and promotion on real education and career records', () => {

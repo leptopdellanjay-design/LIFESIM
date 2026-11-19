@@ -4,6 +4,7 @@ import {
   buyProperty,
   createInitialEconomyRecord,
   invest,
+  processEconomyMonth,
   processEconomyYear,
   propertyCatalog,
   repayLoan,
@@ -69,6 +70,7 @@ describe('economy engine', () => {
       propertyType: 'rental',
       annualRent: 11_000_000,
     });
+
     expect(bought.character.netWorth).toBe(initialNetWorth);
 
     const annual = processEconomyYear(bought.character, () => 0.5);
@@ -80,6 +82,17 @@ describe('economy engine', () => {
     expect(sold.character.cash).toBeGreaterThan(bought.character.cash);
     expect(sold.character.cash).toBeLessThan(bought.character.cash + bought.character.assets[0].value);
     expect(propertyCatalog.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('posts rent and maintenance as monthly cash flows', () => {
+    const bought = buyProperty(makeCharacter(), 'rental-home')!;
+    const month = processEconomyMonth(bought.character, 6, () => 0.5);
+
+    expect(month.income).toBe(Math.round(11_000_000 / 12));
+    expect(month.expenses).toBe(Math.round(2_500_000 / 12));
+    expect(month.character.cash).toBe(
+      bought.character.cash + month.income - month.expenses,
+    );
   });
 
   it('keeps investment returns inside the investment asset, not duplicated as cash', () => {

@@ -161,21 +161,43 @@ a:focus-visible {
 }
 
 .workspace {
-  display: grid;
-  grid-template-columns: 215px minmax(0, 1fr);
-  align-items: start;
-  gap: clamp(20px, 3vw, 42px);
+  display: block;
 }
 
 .sidebar {
-  position: sticky;
-  top: 18px;
-  min-width: 0;
+  position: fixed;
+  z-index: 20;
+  top: 92px;
+  left: max(12px, calc((100vw - 1480px) / 2 + 46px));
+  width: min(270px, calc(100vw - 24px));
+  max-height: calc(100vh - 108px);
+  overflow: auto;
   padding: 17px 12px 13px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgb(255 254 250 / 88%);
   box-shadow: 0 8px 28px rgb(34 49 37 / 4%);
+  transform: translateX(calc(-100% - 24px));
+  visibility: hidden;
+  transition: transform .2s ease, visibility .2s ease;
+}
+
+.sidebar.is-open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.navigation-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+  border: 0;
+  background: rgb(24 37 29 / 30%);
+  cursor: pointer;
+}
+
+.navigation-toggle {
+  flex: 0 0 auto;
 }
 
 .nav-heading,
@@ -268,7 +290,13 @@ a:focus-visible {
 }
 
 .mobile-page-label {
-  display: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 2px 12px;
+  color: #718071;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .page-intro {
@@ -412,6 +440,44 @@ a:focus-visible {
   grid-template-columns: minmax(0, 1.15fr) minmax(270px, .85fr);
   align-items: stretch;
   gap: 15px;
+}
+
+.calendar-panel {
+  grid-column: 1 / -1;
+}
+
+.calendar-month-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 15px;
+}
+
+.calendar-month {
+  display: flex;
+  min-height: 48px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: #78847b;
+  background: #fbfbf6;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.calendar-month.is-current {
+  border-color: #9ab19a;
+  color: var(--green-dark);
+  background: var(--green-pale);
+}
+
+.calendar-month.has-moment small {
+  color: #8a7544;
+  font-size: 8px;
+  font-weight: 600;
 }
 
 .panel-heading {
@@ -853,6 +919,12 @@ a:focus-visible {
   margin: 19px 0 4px;
 }
 
+.age-actions {
+  display: grid;
+  width: min(100%, 460px);
+  gap: 8px;
+}
+
 .age-button {
   display: flex;
   width: min(100%, 460px);
@@ -871,9 +943,23 @@ a:focus-visible {
   transition: background .18s ease, transform .18s ease;
 }
 
+.age-button-year {
+  min-height: 46px;
+  border: 1px solid #dce5d8;
+  color: var(--green-dark);
+  background: #f5f8f2;
+  font-size: 12px;
+}
+
 .age-button:hover:not(:disabled) {
   transform: translateY(-1px);
   background: var(--green-dark);
+}
+
+.age-button-year:hover:not(:disabled) {
+  border-color: #b7c9b2;
+  color: var(--green-dark);
+  background: #eaf1e7;
 }
 
 .age-button:disabled {
@@ -906,6 +992,124 @@ a:focus-visible {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.estate-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e7d8ce;
+  border-radius: 12px;
+  background: #fffaf6;
+}
+
+.estate-summary p {
+  margin: 0;
+}
+
+.succession-actions {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.succession-actions h3 {
+  margin: 0;
+  color: #344239;
+  font-size: 14px;
+}
+
+.lineage-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lineage-list li {
+  display: grid;
+  gap: 4px;
+  padding: 12px 0 12px 15px;
+  border-left: 2px solid #dce5d8;
+}
+
+.lineage-list li.current-generation {
+  border-left-color: var(--green);
+}
+
+.lineage-list b {
+  color: #344239;
+  font-size: 12px;
+}
+
+.lineage-list span,
+.lineage-list small {
+  color: #78827a;
+  font-size: 10px;
+}
+
+.digital-app-launcher {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.digital-app-button {
+  display: grid;
+  min-height: 76px;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: #526357;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.digital-app-button.is-active {
+  border-color: #9eb69a;
+  color: var(--green-dark);
+  background: var(--green-pale);
+}
+
+.digital-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.digital-form .education-effort input,
+.digital-form .education-effort select {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 7px;
+  padding: 0 10px;
+  border: 1px solid #e1e5dc;
+  border-radius: 9px;
+  color: #344239;
+  background: #fff;
+  font: inherit;
+}
+
+.digital-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.digital-section-title {
+  margin: 18px 0 8px;
+  color: #344239;
+  font-size: 13px;
 }
 
 .relationship-meter {
@@ -1003,6 +1207,75 @@ a:focus-visible {
   display: grid;
 }
 
+.save-management {
+  display: grid;
+  gap: 10px;
+  padding: 18px 0;
+  border-bottom: 1px solid #eff0e9;
+}
+
+.restore-backup-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px 0;
+  color: #78827a;
+  font-size: 11px;
+}
+
+.restore-backup-row .backup-import-button {
+  min-height: 32px;
+}
+
+.save-management > label {
+  color: #344239;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.save-management select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e1e5dc;
+  border-radius: 10px;
+  color: #344239;
+  background: #fff;
+  font: inherit;
+}
+
+.save-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backup-import-button {
+  position: relative;
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  cursor: pointer;
+}
+
+.backup-import-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.backup-import-button.is-disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 .setting-row {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -1056,11 +1329,6 @@ a:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .workspace {
-    grid-template-columns: 185px minmax(0, 1fr);
-    gap: 19px;
-  }
-
   .profile-panel {
     grid-template-columns: 96px minmax(0, 1fr);
   }
@@ -1077,6 +1345,10 @@ a:focus-visible {
 
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-month-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -1108,7 +1380,7 @@ a:focus-visible {
   }
 
   .topbar-year {
-    min-width: 74px;
+    min-width: 98px;
     gap: 6px;
     padding: 6px 8px;
   }
@@ -1122,7 +1394,8 @@ a:focus-visible {
   }
 
   .topbar-year b {
-    font-size: 14px;
+    font-size: 10px;
+    white-space: nowrap;
   }
 
   .save-indicator {
@@ -1144,58 +1417,13 @@ a:focus-visible {
     height: 38px;
   }
 
-  .workspace {
-    display: block;
-  }
-
-  .sidebar {
-    position: relative;
-    top: auto;
-    z-index: 2;
-    margin-bottom: 17px;
-    padding: 7px;
-    border-radius: 14px;
-  }
-
-  .nav-heading,
-  .sidebar-note {
+  .settings-shortcut {
     display: none;
-  }
-
-  .nav-list {
-    display: flex;
-    gap: 5px;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .nav-list li {
-    flex: 0 0 auto;
   }
 
   .nav-link {
     min-height: 42px;
-    gap: 7px;
-    padding: 0 11px;
-    white-space: nowrap;
     font-size: 11px;
-  }
-
-  .nav-link svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  .mobile-page-label {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin: 0 2px 12px;
-    color: #718071;
-    font-size: 10px;
-    font-weight: 700;
   }
 
   .page-intro {
@@ -1355,8 +1583,12 @@ a:focus-visible {
   }
 
   .topbar-year {
-    min-width: 64px;
+    min-width: 98px;
     padding: 5px 6px;
+  }
+
+  .save-indicator {
+    display: none;
   }
 
   .icon-button {

@@ -4,11 +4,16 @@ import type {
   Character,
   CharacterIdentity,
   ChildRecord,
+  DigitalContentCategory,
+  DigitalPlatformId,
   EventProgress,
   LifeEvent,
   StudyEffort,
 } from '../types/game';
-import { ageUp } from '../engine/agingEngine';
+import {
+  advanceMonth as simulateNextMonth,
+  advanceYear as simulateNextYear,
+} from '../engine/agingEngine';
 import { applyConsequence } from '../engine/consequenceEngine';
 import { getCharacterName } from '../engine/characterCreation';
 import { lifeEventLibrary } from '../data/events';
@@ -34,7 +39,17 @@ import {
   getChoiceUnavailableReason,
   recordEventChoice,
 } from '../engine/eventEngine';
-import { loadActiveGame, createActiveGameIfAbsent, saveActiveGame } from '../persistence/gameSave';
+import {
+  DEFAULT_SAVE_SLOT_ID,
+  createActiveGameIfAbsent,
+  getPreferredSaveSlotId,
+  importGameBackup as persistGameBackup,
+  listSavedGames,
+  loadActiveGame,
+  saveActiveGame,
+  setPreferredSaveSlotId,
+  type SaveSlotSummary,
+} from '../persistence/gameSave';
 import {
   askToDate,
   divorcePartner as divorce,
@@ -55,6 +70,11 @@ import {
   setChildParentingStyle,
 } from '../engine/familyEngine';
 import {
+  createSuccessorCharacter,
+  settleEstateOnDeath,
+  setEstatePlan as updateEstatePlan,
+} from '../engine/successionEngine';
+import {
   buyProperty,
   closeBusiness,
   invest,
@@ -67,6 +87,16 @@ import {
   takeLoan,
   type MonthlyBudget,
 } from '../engine/economyEngine';
+import {
+  activateAccountMonetization as activateDigitalMonetization,
+  buyCreatorEquipment as purchaseCreatorEquipment,
+  buyMobileDataPackage as purchaseMobileDataPackage,
+  buySmartphone as purchaseSmartphone,
+  createSocialAccount as createDigitalSocialAccount,
+  normalizeDigitalLifeRecord,
+  publishDigitalContent as publishDigitalContentAction,
+  sellSmartphone as sellCharacterSmartphone,
+} from '../engine/digitalLifeEngine';
 
 export type PersistenceStatus = 'loading' | 'unsaved' | 'saving' | 'saved' | 'error';
 
@@ -76,13 +106,21 @@ interface GameState {
   activeEvent: LifeEvent | null;
   eventProgress: EventProgress;
   isAdvancing: boolean;
+  advanceMode: 'month' | 'year' | null;
   isHydrated: boolean;
   persistenceStatus: PersistenceStatus;
   persistenceError: string | null;
+  selectedSaveSlotId: string;
+  saveSlots: SaveSlotSummary[];
   hydrate: () => Promise<void>;
+  refreshSaveSlots: () => Promise<void>;
+  selectSaveSlot: (slotId: string) => Promise<boolean>;
+  createNewSaveSlot: () => Promise<boolean>;
+  importGameBackup: (serialized: string) => Promise<boolean>;
   startLife: (character: Character) => Promise<boolean>;
   updateCharacterIdentity: (identity: CharacterIdentity) => Promise<boolean>;
   chooseEventChoice: (choiceId: string) => Promise<boolean>;
+  advanceMonth: (random?: () => number) => Promise<boolean>;
   advanceYear: (random?: () => number) => Promise<boolean>;
   enrollInProgram: (programId: string, universityId: string) => Promise<boolean>;
   applyForScholarship: (scholarshipId: string) => Promise<boolean>;
@@ -118,6 +156,26 @@ interface GameState {
   repayLoan: (loanId: string, amount: number) => Promise<boolean>;
   startBusiness: (kind: 'food_stall' | 'grocery' | 'craft_shop', name: string) => Promise<boolean>;
   closeBusiness: (businessId: string) => Promise<boolean>;
+  buySmartphone: (modelId: string, condition?: 'new' | 'used') => Promise<boolean>;
+  sellSmartphone: () => Promise<boolean>;
+  buyMobileDataPackage: (packageId: string) => Promise<boolean>;
+  buyCreatorEquipment: (equipmentId: string) => Promise<boolean>;
+  createSocialAccount: (platformId: DigitalPlatformId, username: string) => Promise<boolean>;
+  activateDigitalMonetization: (accountId: string) => Promise<boolean>;
+  publishDigitalContent: (
+    input: {
+      accountId: string;
+      category: DigitalContentCategory;
+      title: string;
+      description: string;
+    },
+    random?: () => number,
+  ) => Promise<boolean>;
+  setEstatePlan: (
+    distribution: Character['estatePlan']['distribution'],
+    namedHeirId?: string | null,
+  ) => Promise<boolean>;
+  continueAsHeir: (childId: string) => Promise<boolean>;
   saveCurrentGame: () => Promise<boolean>;
 }
 
@@ -131,7 +189,7 @@ function restoreCharacter(character: Character): Character {
     education?: string;
     occupation?: string | null;
   };
-  return normalizeEconomyRecord(normalizeFamilyRecords({
+  const restored = normalizeDigitalLifeRecord(normalizeEconomyRecord(normalizeFamilyRecords({
     ...character,
     educationRecord: character.educationRecord
       ?? createEducationRecordFromLegacy(legacyCharacter.education, character.currentYear),
@@ -152,6 +210,7 @@ function restoreCharacter(character: Character): Character {
       statChanges: {},
     },
     deathRecord: character.deathRecord ?? null,
+    currentMonth: character.currentMonth ?? 1,
     lastYearIncome: character.lastYearIncome ?? 0,
     lastYearExpenses: character.lastYearExpenses ?? 0,
     debt: character.debt ?? 0,
@@ -162,7 +221,10 @@ function restoreCharacter(character: Character): Character {
     spouseName: character.spouseName ?? null,
     legalStatus: character.legalStatus ?? 'clear',
     organizations: character.organizations ?? [],
-  }));
+  })));
+  return restored.status === 'deceased'
+    ? settleEstateOnDeath(restored).character
+    : restored;
 }
 
 function restoreEventProgress(progress?: Partial<EventProgress> | null): EventProgress {
@@ -182,11 +244,19 @@ function restoreEventProgress(progress?: Partial<EventProgress> | null): EventPr
         : 'Rincian hasil pilihan tidak tersedia pada versi sebelumnya.',
     };
   });
+  const yearAdvanceRemaining = progress?.yearAdvanceRemaining;
   return {
     ...defaults,
     ...progress,
     completedEventIds: progress?.completedEventIds ?? defaults.completedEventIds,
     lastEventYears: progress?.lastEventYears ?? defaults.lastEventYears,
+    lastEventMonths: progress?.lastEventMonths ?? defaults.lastEventMonths,
+    yearAdvanceRemaining: Number.isInteger(yearAdvanceRemaining)
+      && yearAdvanceRemaining !== undefined
+      && yearAdvanceRemaining >= 1
+      && yearAdvanceRemaining <= 11
+      ? yearAdvanceRemaining
+      : undefined,
     history,
     pendingEventIds: progress?.pendingEventIds ?? defaults.pendingEventIds,
     pendingConsequences: progress?.pendingConsequences ?? defaults.pendingConsequences,
@@ -209,7 +279,8 @@ export const useGameStore = create<GameState>((set, get) => {
         history,
         activeEvent: state.activeEvent,
         eventProgress: state.eventProgress,
-      });
+      }, state.selectedSaveSlotId);
+      await setPreferredSaveSlotId(state.selectedSaveSlotId);
       set({
         character: result.character,
         history,
@@ -238,7 +309,8 @@ export const useGameStore = create<GameState>((set, get) => {
         history: state.history,
         activeEvent: state.activeEvent,
         eventProgress: state.eventProgress,
-      });
+      }, state.selectedSaveSlotId);
+      await setPreferredSaveSlotId(state.selectedSaveSlotId);
       set({ persistenceStatus: 'saved', persistenceError: null });
       return true;
     } catch (error) {
@@ -256,34 +328,47 @@ export const useGameStore = create<GameState>((set, get) => {
     activeEvent: null,
     eventProgress: createEmptyEventProgress(),
     isAdvancing: false,
+    advanceMode: null,
     isHydrated: false,
     persistenceStatus: 'loading',
     persistenceError: null,
+    selectedSaveSlotId: DEFAULT_SAVE_SLOT_ID,
+    saveSlots: [],
 
     hydrate: async () => {
       set({ persistenceStatus: 'loading', persistenceError: null });
       try {
-        const save = await loadActiveGame();
+        const selectedSaveSlotId = await getPreferredSaveSlotId();
+        const [save, saveSlots] = await Promise.all([
+          loadActiveGame(selectedSaveSlotId),
+          listSavedGames(),
+        ]);
         if (save && save.version !== 3 && save.version !== 4 && save.version !== 5 && save.version !== 6) {
           throw new Error(`Versi data simpanan ${save.version} belum didukung.`);
         }
         set(save
           ? {
+            selectedSaveSlotId,
+            saveSlots,
             character: restoreCharacter(save.character),
             history: save.history,
             activeEvent: save.activeEvent,
             eventProgress: restoreEventProgress(save.eventProgress),
             isAdvancing: false,
+            advanceMode: null,
             isHydrated: true,
             persistenceStatus: 'saved',
             persistenceError: null,
           }
           : {
+            selectedSaveSlotId,
+            saveSlots,
             character: null,
             history: [],
             activeEvent: null,
             eventProgress: createEmptyEventProgress(),
             isAdvancing: false,
+            advanceMode: null,
             isHydrated: true,
             persistenceStatus: 'unsaved',
             persistenceError: null,
@@ -297,8 +382,95 @@ export const useGameStore = create<GameState>((set, get) => {
       }
     },
 
+    refreshSaveSlots: async () => {
+      try {
+        set({ saveSlots: await listSavedGames() });
+      } catch (error) {
+        set({
+          persistenceStatus: 'error',
+          persistenceError: `Daftar simpanan tidak dapat dimuat: ${getErrorMessage(error)}`,
+        });
+      }
+    },
+
+    selectSaveSlot: async (slotId) => {
+      const state = get();
+      if (state.isAdvancing || state.persistenceStatus === 'saving'
+        || state.persistenceStatus === 'error') return false;
+      try {
+        const save = await loadActiveGame(slotId);
+        if (!save) return false;
+        await setPreferredSaveSlotId(slotId);
+        set({
+          selectedSaveSlotId: slotId,
+          character: restoreCharacter(save.character),
+          history: save.history,
+          activeEvent: save.activeEvent,
+          eventProgress: restoreEventProgress(save.eventProgress),
+          isAdvancing: false,
+          advanceMode: null,
+          isHydrated: true,
+          persistenceStatus: 'saved',
+          persistenceError: null,
+        });
+        return true;
+      } catch (error) {
+        set({
+          persistenceStatus: 'error',
+          persistenceError: `Simpanan tidak dapat dibuka: ${getErrorMessage(error)}`,
+        });
+        return false;
+      }
+    },
+
+    createNewSaveSlot: async () => {
+      const state = get();
+      if (state.isAdvancing || state.persistenceStatus === 'saving'
+        || state.persistenceStatus === 'error') return false;
+      try {
+        const slotId = crypto.randomUUID();
+        set({
+          selectedSaveSlotId: slotId,
+          character: null,
+          history: [],
+          activeEvent: null,
+          eventProgress: createEmptyEventProgress(),
+          isAdvancing: false,
+          advanceMode: null,
+          persistenceStatus: 'unsaved',
+          persistenceError: null,
+        });
+        return true;
+      } catch (error) {
+        set({
+          persistenceStatus: 'error',
+          persistenceError: `Slot cerita baru tidak dapat dibuat: ${getErrorMessage(error)}`,
+        });
+        return false;
+      }
+    },
+
+    importGameBackup: async (serialized) => {
+      const state = get();
+      if (state.isAdvancing || state.persistenceStatus === 'saving') return false;
+      set({ persistenceStatus: 'saving', persistenceError: null });
+      try {
+        await persistGameBackup(serialized, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
+        await get().hydrate();
+        return get().persistenceStatus === 'saved';
+      } catch (error) {
+        set({
+          persistenceStatus: 'error',
+          persistenceError: `Cadangan tidak dapat dipulihkan: ${getErrorMessage(error)}`,
+        });
+        return false;
+      }
+    },
+
     startLife: async (character) => {
-      if (get().character || get().persistenceStatus === 'saving') return false;
+      const state = get();
+      if (state.character || state.persistenceStatus === 'saving') return false;
 
       const game = {
         character,
@@ -311,18 +483,22 @@ export const useGameStore = create<GameState>((set, get) => {
       set({ persistenceStatus: 'saving', persistenceError: null });
 
       try {
-        const created = await createActiveGameIfAbsent(game);
+        const created = await createActiveGameIfAbsent(game, state.selectedSaveSlotId);
         if (!created) {
+          await setPreferredSaveSlotId(state.selectedSaveSlotId);
           await get().hydrate();
           return false;
         }
         set({
           ...game,
           isAdvancing: false,
+          advanceMode: null,
           isHydrated: true,
           persistenceStatus: 'saved',
           persistenceError: null,
         });
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
+        await get().refreshSaveSlots();
         return true;
       } catch (error) {
         set({
@@ -360,7 +536,8 @@ export const useGameStore = create<GameState>((set, get) => {
           history,
           activeEvent: state.activeEvent,
           eventProgress: state.eventProgress,
-        });
+        }, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
         set({
           character,
           history,
@@ -388,7 +565,7 @@ export const useGameStore = create<GameState>((set, get) => {
       const nextCharacter = applyConsequence(character, choice.consequence);
       const nextHistory = [
         ...state.history,
-        `${character.currentYear}: ${event.title} — ${choice.consequence.historyText}`,
+        `${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: ${event.title} — ${choice.consequence.historyText}`,
       ];
       const nextEventProgress = recordEventChoice(
         state.eventProgress,
@@ -396,6 +573,7 @@ export const useGameStore = create<GameState>((set, get) => {
         choiceId,
         character.currentYear,
         character.age,
+        character.currentMonth,
       );
       set({ persistenceStatus: 'saving', persistenceError: null });
       try {
@@ -404,7 +582,8 @@ export const useGameStore = create<GameState>((set, get) => {
           history: nextHistory,
           activeEvent: null,
           eventProgress: nextEventProgress,
-        });
+        }, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
         set({
           character: nextCharacter,
           history: nextHistory,
@@ -423,6 +602,60 @@ export const useGameStore = create<GameState>((set, get) => {
       }
     },
 
+    advanceMonth: async (random = Math.random) => {
+      const state = get();
+      const character = state.character;
+      if (!character
+        || state.activeEvent
+        || state.isAdvancing
+        || state.persistenceStatus === 'saving'
+        || character.status !== 'alive') return false;
+
+      set({
+        isAdvancing: true,
+        advanceMode: 'month',
+        persistenceStatus: 'saving',
+        persistenceError: null,
+      });
+      try {
+        const result = simulateNextMonth(character, state.eventProgress, random);
+        const remainingMonths = state.eventProgress.yearAdvanceRemaining;
+        const nextEventProgress = {
+          ...result.eventProgress,
+          yearAdvanceRemaining: remainingMonths && remainingMonths > 1 && result.character.status === 'alive'
+            ? remainingMonths - 1
+            : undefined,
+        };
+        const nextHistory = [...state.history, ...result.historyEntries];
+        await saveActiveGame({
+          character: result.character,
+          history: nextHistory,
+          activeEvent: result.activeEvent,
+          eventProgress: nextEventProgress,
+        }, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
+        set({
+          character: result.character,
+          history: nextHistory,
+          activeEvent: result.activeEvent,
+          eventProgress: nextEventProgress,
+          isAdvancing: false,
+          advanceMode: null,
+          persistenceStatus: 'saved',
+          persistenceError: null,
+        });
+        return true;
+      } catch (error) {
+        set({
+          isAdvancing: false,
+          advanceMode: null,
+          persistenceStatus: 'error',
+          persistenceError: `Bulan belum dapat dijalankan: ${getErrorMessage(error)}`,
+        });
+        return false;
+      }
+    },
+
     advanceYear: async (random = Math.random) => {
       const state = get();
       const character = state.character;
@@ -432,22 +665,41 @@ export const useGameStore = create<GameState>((set, get) => {
         || state.persistenceStatus === 'saving'
         || character.status !== 'alive') return false;
 
-      set({ isAdvancing: true, persistenceStatus: 'saving', persistenceError: null });
+      set({
+        isAdvancing: true,
+        advanceMode: 'year',
+        persistenceStatus: 'saving',
+        persistenceError: null,
+      });
       try {
-        const result = ageUp(character, state.eventProgress, random);
+        const monthsToAdvance = state.eventProgress.yearAdvanceRemaining ?? 12;
+        const result = simulateNextYear(character, state.eventProgress, random, monthsToAdvance);
+        if (result.monthsAdvanced === 0) {
+          set({ isAdvancing: false, advanceMode: null, persistenceStatus: 'saved' });
+          return false;
+        }
+        const remainingMonths = result.activeEvent && result.character.status === 'alive'
+          ? monthsToAdvance - result.monthsAdvanced
+          : 0;
+        const nextEventProgress = {
+          ...result.eventProgress,
+          yearAdvanceRemaining: remainingMonths > 0 ? remainingMonths : undefined,
+        };
         const nextHistory = [...state.history, ...result.historyEntries];
         await saveActiveGame({
           character: result.character,
           history: nextHistory,
           activeEvent: result.activeEvent,
-          eventProgress: result.eventProgress,
-        });
+          eventProgress: nextEventProgress,
+        }, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
         set({
           character: result.character,
           history: nextHistory,
           activeEvent: result.activeEvent,
-          eventProgress: result.eventProgress,
+          eventProgress: nextEventProgress,
           isAdvancing: false,
+          advanceMode: null,
           persistenceStatus: 'saved',
           persistenceError: null,
         });
@@ -455,6 +707,7 @@ export const useGameStore = create<GameState>((set, get) => {
       } catch (error) {
         set({
           isAdvancing: false,
+          advanceMode: null,
           persistenceStatus: 'error',
           persistenceError: `Tahun belum dapat dijalankan: ${getErrorMessage(error)}`,
         });
@@ -570,6 +823,12 @@ export const useGameStore = create<GameState>((set, get) => {
         character ? setChildParentingStyle(character, childId, style) : null,
       );
     },
+    setEstatePlan: async (distribution, namedHeirId = null) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? updateEstatePlan(character, distribution, namedHeirId) : null,
+      );
+    },
     setMonthlyBudget: async (budget) => {
       const character = get().character;
       return commitCharacterAction(character ? setMonthlyBudget(character, budget) : null);
@@ -605,6 +864,76 @@ export const useGameStore = create<GameState>((set, get) => {
     closeBusiness: async (businessId) => {
       const character = get().character;
       return commitCharacterAction(character ? closeBusiness(character, businessId) : null);
+    },
+    buySmartphone: async (modelId, condition = 'new') => {
+      const character = get().character;
+      return commitCharacterAction(character ? purchaseSmartphone(character, modelId, condition) : null);
+    },
+    sellSmartphone: async () => {
+      const character = get().character;
+      return commitCharacterAction(character ? sellCharacterSmartphone(character) : null);
+    },
+    buyMobileDataPackage: async (packageId) => {
+      const character = get().character;
+      return commitCharacterAction(character ? purchaseMobileDataPackage(character, packageId) : null);
+    },
+    buyCreatorEquipment: async (equipmentId) => {
+      const character = get().character;
+      return commitCharacterAction(character ? purchaseCreatorEquipment(character, equipmentId) : null);
+    },
+    createSocialAccount: async (platformId, username) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? createDigitalSocialAccount(character, platformId, username) : null,
+      );
+    },
+    activateDigitalMonetization: async (accountId) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? activateDigitalMonetization(character, accountId) : null,
+      );
+    },
+    publishDigitalContent: async (input, random = Math.random) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? publishDigitalContentAction(character, input, random) : null,
+      );
+    },
+    continueAsHeir: async (childId) => {
+      const state = get();
+      if (!state.character || state.isAdvancing || state.persistenceStatus === 'saving') return false;
+      const result = createSuccessorCharacter(state.character, childId);
+      if (!result) return false;
+      const history = [
+        ...state.history,
+        `${state.character.currentYear}: ${result.historyText}`,
+      ];
+      set({ persistenceStatus: 'saving', persistenceError: null });
+      try {
+        await saveActiveGame({
+          character: result.character,
+          history,
+          activeEvent: null,
+          eventProgress: state.eventProgress,
+        }, state.selectedSaveSlotId);
+        await setPreferredSaveSlotId(state.selectedSaveSlotId);
+        set({
+          character: result.character,
+          history,
+          activeEvent: null,
+          isAdvancing: false,
+          persistenceStatus: 'saved',
+          persistenceError: null,
+        });
+        await get().refreshSaveSlots();
+        return true;
+      } catch (error) {
+        set({
+          persistenceStatus: 'error',
+          persistenceError: `Generasi penerus belum dapat disimpan: ${getErrorMessage(error)}`,
+        });
+        return false;
+      }
     },
 
     saveCurrentGame: saveSnapshot,

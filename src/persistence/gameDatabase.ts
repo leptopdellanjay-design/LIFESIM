@@ -4,9 +4,10 @@ import { createEducationRecordFromLegacy } from '../engine/educationEngine';
 import { createCareerRecordFromLegacy } from '../engine/careerEngine';
 import { normalizeFamilyRecords } from '../engine/familyEngine';
 import { normalizeEconomyRecord } from '../engine/economyEngine';
+import { normalizeDigitalLifeRecord } from '../engine/digitalLifeEngine';
 
 export interface PersistedGame {
-  id: 'active';
+  id: string;
   version: number;
   character: Character;
   history: string[];
@@ -17,6 +18,7 @@ export interface PersistedGame {
 
 export class GameDatabase extends Dexie {
   saves!: Table<PersistedGame, string>;
+  settings!: Table<{ id: string; value: string }, string>;
 
   constructor(name = 'indolife') {
     super(name);
@@ -125,7 +127,63 @@ export class GameDatabase extends Dexie {
         save.version = 6;
       });
     });
+    this.version(7).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    });
+    this.version(8).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        const character = save.character as Character & {
+          generation?: number;
+          ancestors?: Character['ancestors'];
+          estatePlan?: Character['estatePlan'];
+          estateSettlement?: Character['estateSettlement'];
+        };
+        character.generation ??= 0;
+        character.ancestors ??= [];
+        character.estatePlan ??= {
+          distribution: 'equal_heirs',
+          namedHeirId: null,
+          updatedYear: character.currentYear,
+        };
+        character.estateSettlement ??= null;
+        character.children ??= [];
+        character.children.forEach((child) => {
+          child.gender ??= 'other';
+          child.inheritanceCash ??= 0;
+        });
+      });
+    });
+    this.version(9).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        save.character.currentMonth ??= 1;
+        save.eventProgress.lastEventMonths ??= {};
+      });
+    });
+    this.version(10).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        save.character = normalizeFamilyRecords(save.character);
+      });
+    });
+    this.version(11).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        save.character = normalizeDigitalLifeRecord(save.character);
+      });
+    });
     this.saves = this.table('saves');
+    this.settings = this.table('settings');
   }
 }
 

@@ -4,18 +4,23 @@ import {
   ArrowRight,
   BookOpen,
   Briefcase,
+  Camera,
   CalendarDays,
-  Cloud,
-  CloudOff,
+  CreditCard,
+  HardDrive,
   GraduationCap,
   Heart,
   Home,
   House,
   MapPin,
+  Menu,
   Pencil,
+  ShoppingBag,
   Settings,
+  Smartphone,
   Users,
   Wallet,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import type {
@@ -23,6 +28,10 @@ import type {
   Character,
   ChildRecord,
   BusinessKind,
+  DigitalAppId,
+  DigitalContentCategory,
+  DigitalPlatformId,
+  EstateDistributionRule,
   EventProgress,
   FamilyMember,
   FamilyMemberRole,
@@ -35,6 +44,7 @@ import type {
   FamilyInteraction,
   RelationshipInteraction,
 } from './engine/relationshipEngine';
+import { getCurrentSpouse, getVisibleRelationships } from './engine/relationshipEngine';
 import {
   budgetCategories,
   businessCatalog,
@@ -49,7 +59,9 @@ import { CharacterCreation } from './components/CharacterCreation';
 import { CharacterProfileEditor } from './components/CharacterProfileEditor';
 import { getFamilyBackground } from './data/familyBackgrounds';
 import { getCharacterName } from './engine/characterCreation';
+import { getMonthlyParentalSupport } from './engine/familySupport';
 import { getLifeStage } from './engine/lifeStages';
+import { getMonthName, monthNames } from './engine/calendar';
 import { getNominalPriceFactor, getWorldYearContext } from './engine/worldEra';
 import {
   getEducationDisplayLabel,
@@ -60,6 +72,23 @@ import {
 import { getEligibleOccupations, canReceivePromotion } from './engine/careerEngine';
 import { getEducationLevelLabel, studyPrograms, universities } from './data/educationCatalog';
 import { careerCategoryLabels, getEmployer, getOccupation, getOccupationTitle } from './data/careerCatalog';
+import { exportGameBackup, type SaveSlotSummary } from './persistence/gameSave';
+import { getEligibleSuccessors } from './engine/successionEngine';
+import {
+  canMonetizeAccount,
+  getDigitalProductionCost,
+  getDigitalCreatorLevel,
+} from './engine/digitalLifeEngine';
+import {
+  creatorEquipment,
+  dataPackages,
+  digitalApps,
+  digitalContentCategories,
+  digitalPlatforms,
+  getDigitalPlatform,
+  getSmartphoneModel,
+  smartphoneModels,
+} from './data/digitalCatalog';
 
 type PageId =
   | 'home'
@@ -69,6 +98,7 @@ type PageId =
   | 'relationships'
   | 'family'
   | 'finance'
+  | 'digital'
   | 'property'
   | 'history'
   | 'settings';
@@ -87,6 +117,7 @@ const navigationItems: NavigationItem[] = [
   { id: 'relationships', label: 'Hubungan', icon: Heart },
   { id: 'family', label: 'Keluarga', icon: Users },
   { id: 'finance', label: 'Keuangan', icon: Wallet },
+  { id: 'digital', label: 'Kehidupan digital', icon: Smartphone },
   { id: 'property', label: 'Properti', icon: House },
   { id: 'history', label: 'Riwayat hidup', icon: BookOpen },
   { id: 'settings', label: 'Pengaturan', icon: Settings },
@@ -98,11 +129,56 @@ const money = (amount: number, currencyCode = 'IDR') => new Intl.NumberFormat('i
   maximumFractionDigits: 0,
 }).format(amount);
 
+const eventDateLabel = (year: number, month?: number) => (
+  month ? `${year}-${String(month).padStart(2, '0')}` : String(year)
+);
+
 const genderLabels = {
   male: 'Laki-laki',
   female: 'Perempuan',
   other: 'Lainnya',
 } as const;
+
+function getDashboardCharacterName(character: Character): string {
+  const degrees = character.educationRecord.degrees;
+  const doctorate = degrees.some((degree) => degree.level === 's3');
+  const postnominals = [...new Set(degrees
+    .filter((degree) => degree.level !== 's3' || degree.abbreviation !== 'Dr.')
+    .map((degree) => degree.abbreviation))];
+  return `${doctorate ? 'Dr. ' : ''}${getCharacterName(character)}${postnominals.length > 0 ? `, ${postnominals.join(', ')}` : ''}`;
+}
+
+function CalendarPanel({ month, year }: { month: number; year: number }) {
+  const moments: Record<number, string> = {
+    1: 'Tahun baru',
+    8: '17 Agustus',
+    12: 'Akhir tahun',
+  };
+  return (
+    <section className="panel calendar-panel" aria-label="Kalender kehidupan">
+      <div className="panel-heading">
+        <div><span className="eyebrow">KALENDER KEHIDUPAN</span><h2>{getMonthName(month)} {year}</h2></div>
+        <CalendarDays size={19} aria-hidden="true" />
+      </div>
+      <div className="calendar-month-grid">
+        {monthNames.map((name, index) => {
+          const monthNumber = index + 1;
+          return (
+            <div
+              className={`calendar-month${monthNumber === month ? ' is-current' : ''}${moments[monthNumber] ? ' has-moment' : ''}`}
+              aria-current={monthNumber === month ? 'date' : undefined}
+              key={name}
+            >
+              <span>{name.slice(0, 3)}</span>
+              {moments[monthNumber] && <small>{moments[monthNumber]}</small>}
+            </div>
+          );
+        })}
+      </div>
+      <p className="footnote">Momen nasional dan tahunan membuka pilihan saat waktunya tiba; kejadian acak dapat muncul sepanjang tahun.</p>
+    </section>
+  );
+}
 
 const eventCategoryLabels: Record<string, string> = {
   family: 'Keluarga',
@@ -191,8 +267,8 @@ function FinancialOverview({ character }: { character: Character }) {
       </span>
       <div className="finance-detail">
         <div><span>Kekayaan bersih</span><b>{money(character.netWorth, currencyCode)}</b></div>
-        <div><span>Pemasukan terakhir</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
-        <div><span>Pengeluaran terakhir</span><b>{money(character.lastYearExpenses, currencyCode)}</b></div>
+        <div><span>Pemasukan tahun ini</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
+        <div><span>Pengeluaran tahun ini</span><b>{money(character.lastYearExpenses, currencyCode)}</b></div>
       </div>
     </section>
   );
@@ -229,26 +305,42 @@ function Dashboard({
   activeEvent,
   eventProgress,
   chooseEventChoice,
+  advanceMonth,
   advanceYear,
+  advanceMode,
   isAdvancing,
   isBusy,
   onEditCharacter,
+  onContinueAsHeir,
 }: {
   character: Character;
   history: string[];
   activeEvent: LifeEvent | null;
   eventProgress: EventProgress;
   chooseEventChoice: (choiceId: string) => void;
+  advanceMonth: () => Promise<boolean>;
   advanceYear: () => Promise<boolean>;
+  advanceMode: 'month' | 'year' | null;
   isAdvancing: boolean;
   isBusy: boolean;
   onEditCharacter: () => void;
+  onContinueAsHeir: (childId: string) => Promise<boolean>;
 }) {
-  const canAgeUp = character.status === 'alive' && activeEvent === null && !isBusy;
+  const canAdvance = character.status === 'alive' && activeEvent === null && !isBusy;
   const currencyCode = character.birthInformation.location.currencyCode;
   const background = getFamilyBackground(character.familyBackground.tier);
   const worldContext = getWorldYearContext(character.currentYear);
   const lifeStage = getLifeStage(character.age);
+  const eligibleSuccessors = getEligibleSuccessors(character);
+  const monthlyParentalSupport = getMonthlyParentalSupport(character);
+  const livingFamilySummary = character.family.members
+    .filter((member) => member.status === 'alive')
+    .map((member) => {
+      const occupation = member.role === 'father' || member.role === 'mother'
+        ? getOccupation(member.occupationId ?? null)
+        : null;
+      return occupation ? `${member.name} (${occupation.name})` : member.name;
+    });
 
   return (
     <>
@@ -256,11 +348,11 @@ function Dashboard({
         <div>
           <span className="eyebrow">PERJALANAN HIDUPMU</span>
           <h1>Selamat datang kembali</h1>
-          <p>Jalani ceritamu, satu tahun pada satu waktu.</p>
+          <p>Jalani ceritamu, satu bulan pada satu waktu.</p>
         </div>
         <div className="year-card">
           <CalendarDays size={18} aria-hidden="true" />
-          <div><span>TAHUN PERMAINAN</span><b>{character.currentYear}</b></div>
+          <div><span>BULAN · TAHUN</span><b>{getMonthName(character.currentMonth)} {character.currentYear}</b></div>
         </div>
       </div>
 
@@ -269,7 +361,7 @@ function Dashboard({
         <div className="profile-content">
           <span className="eyebrow">PROFIL KARAKTER</span>
           <div className="profile-title-row">
-            <h2 id="profile-name">{getCharacterName(character)}</h2>
+            <h2 id="profile-name">{getDashboardCharacterName(character)}</h2>
             <button type="button" className="edit-profile-button" onClick={onEditCharacter}><Pencil size={14} aria-hidden="true" /> Edit</button>
           </div>
           <p className="profile-subtitle">{lifeStage.label} · {character.age} tahun <span>·</span> {genderLabels[character.identity.gender]}</p>
@@ -289,6 +381,7 @@ function Dashboard({
       <div className="dashboard-grid">
         <CharacterStats character={character} />
         <FinancialOverview character={character} />
+        <CalendarPanel month={character.currentMonth} year={character.currentYear} />
         <section className="panel era-panel" aria-label="Kondisi era permainan">
           <span className="eyebrow">DUNIA PADA TAHUN INI</span>
           <h2>{worldContext.decadeLabel}</h2>
@@ -298,8 +391,13 @@ function Dashboard({
         <section className="panel family-panel" aria-label="Kondisi keluarga">
           <span className="eyebrow">LATAR KELUARGA</span>
           <h2>{background.label}</h2>
-          <p>{character.family.members.filter((member) => member.status === 'alive').map((member) => member.name).join(' · ') || 'Tidak ada anggota keluarga yang tercatat masih hidup'}</p>
+          <p>{livingFamilySummary.join(' · ') || 'Tidak ada anggota keluarga yang tercatat masih hidup'}</p>
           <small>{background.housingLabel} · {character.startingAssets.facilities.join(' · ')}</small>
+          {character.age < 18 && (
+            <small>
+              Kiriman orang tua: {money(monthlyParentalSupport, currencyCode)} per bulan
+            </small>
+          )}
         </section>
 
         <section className="panel event-panel" aria-labelledby="event-title">
@@ -308,7 +406,7 @@ function Dashboard({
               <span className="eyebrow">MOMEN KEHIDUPAN</span>
               <h2 id="event-title">Kejadian saat ini</h2>
             </div>
-            {activeEvent && <span className="event-age">Usia {character.age}</span>}
+            {activeEvent && <span className="event-age">{getMonthName(character.currentMonth)} {character.currentYear}</span>}
           </div>
           {activeEvent ? (
             <>
@@ -316,6 +414,16 @@ function Dashboard({
               {activeEvent.historicalClassification
                 ? <span className="event-category">{eventClassificationLabels[activeEvent.historicalClassification]}</span>
                 : activeEvent.fictional && <span className="event-category">Fiksi simulasi</span>}
+              {activeEvent.calendarMomentType && (
+                <span className="event-category">
+                  {activeEvent.calendarMomentType === 'national'
+                    ? 'Momen nasional'
+                    : activeEvent.calendarMomentType === 'annual'
+                      ? 'Momen tahunan'
+                      : 'Momen acak'}
+                </span>
+              )}
+              {!activeEvent.calendarMomentType && <span className="event-category">Momen acak</span>}
               <h3>{activeEvent.title}</h3>
               <p className="event-description">{activeEvent.description}</p>
               {activeEvent.historicalSource && <p className="event-source">Sumber: {activeEvent.historicalSource}</p>}
@@ -343,8 +451,8 @@ function Dashboard({
           ) : (
             <>
               {eventProgress.history.slice(-3).reverse().map((entry) => (
-                <article className="event-history-entry" key={`${entry.eventId}-${entry.year}-${entry.choiceId}`}>
-                  <span>{entry.year} · {eventCategoryLabels[entry.category] ?? entry.category}</span>
+                <article className="event-history-entry" key={`${entry.eventId}-${entry.year}-${entry.month ?? 0}-${entry.choiceId}`}>
+                  <span>{eventDateLabel(entry.year, entry.month)} · {eventCategoryLabels[entry.category] ?? entry.category}</span>
                   <b>{entry.title}: {entry.choiceLabel}</b>
                   <p>{entry.outcomeText}</p>
                 </article>
@@ -367,24 +475,69 @@ function Dashboard({
       </div>
 
       <div className="age-up-wrap">
-        <button className="age-button" onClick={() => void advanceYear()} disabled={!canAgeUp}>
-          <span>{isAdvancing ? 'Memproses tahun…' : 'Jalani satu tahun lagi'}</span><ArrowRight size={19} aria-hidden="true" />
-        </button>
+        <div className="age-actions">
+          <button className="age-button" onClick={() => void advanceMonth()} disabled={!canAdvance}>
+            <span>{isAdvancing && advanceMode === 'month' ? 'Memproses bulan…' : 'Jalani satu bulan lagi'}</span><ArrowRight size={19} aria-hidden="true" />
+          </button>
+          <button className="age-button age-button-year" onClick={() => void advanceYear()} disabled={!canAdvance}>
+            <span>
+              {isAdvancing && advanceMode === 'year'
+                ? 'Memproses satu tahun…'
+                : eventProgress.yearAdvanceRemaining
+                  ? `Lanjutkan tahun (${eventProgress.yearAdvanceRemaining} bulan)`
+                  : 'Jalani satu tahun'}
+            </span>
+            <CalendarDays size={18} aria-hidden="true" />
+          </button>
+        </div>
         <p aria-live="polite">
           {character.status !== 'alive'
             ? 'Perjalanan karakter ini telah berakhir.'
             : activeEvent
-              ? 'Pilih tindakan pada kejadian saat ini sebelum melanjutkan usia.'
+              ? eventProgress.yearAdvanceRemaining
+                ? `Pilih tindakan pada kejadian ini, lalu lanjutkan sisa ${eventProgress.yearAdvanceRemaining} bulan.`
+                : 'Pilih tindakan pada kejadian saat ini sebelum melanjutkan usia.'
               : isAdvancing
-                ? 'Memproses perkembangan hidup dan menyimpan progres.'
-              : 'Waktu bergerak maju satu tahun.'}
+                ? advanceMode === 'year'
+                  ? 'Waktu bergerak hingga satu tahun dan progres disimpan.'
+                  : 'Memproses perkembangan hidup dan menyimpan progres.'
+                : eventProgress.yearAdvanceRemaining
+                  ? `Tahun dijeda dengan ${eventProgress.yearAdvanceRemaining} bulan tersisa; tombol satu bulan mengurangi sisa itu satu bulan.`
+              : 'Jalani satu tahun memajukan maksimal 12 bulan; proses berhenti jika ada kejadian yang perlu dipilih atau kehidupan berakhir.'}
         </p>
       </div>
       {character.deathRecord && (
         <section className="panel death-summary" aria-labelledby="death-summary-title">
           <span className="eyebrow">RINGKASAN KEHIDUPAN</span>
           <h2 id="death-summary-title">Perjalanan berakhir pada usia {character.deathRecord.age}</h2>
-          <p>Tahun {character.deathRecord.year} · {character.deathRecord.cause}</p>
+          <p>{getMonthName(character.deathRecord.month ?? character.currentMonth)} {character.deathRecord.year} · {character.deathRecord.cause}</p>
+          {character.estateSettlement && (
+            <div className="estate-summary">
+              <p>Harta simulasi {money(character.estateSettlement.grossValue, currencyCode)} · Utang dibayar {money(character.estateSettlement.debtsPaid, currencyCode)} · Sisa {money(character.estateSettlement.netValue, currencyCode)}</p>
+              {character.estateSettlement.shares.map((share) => (
+                <p key={share.beneficiaryId}>{share.beneficiaryName}: {money(share.amount, currencyCode)}</p>
+              ))}
+            </div>
+          )}
+          {eligibleSuccessors.length > 0 ? (
+            <div className="succession-actions">
+              <h3>Lanjutkan sebagai generasi berikutnya</h3>
+              <p>Pilih anak dewasa untuk meneruskan cerita. Harta dialihkan sebagai nilai tunai simulasi setelah utang diselesaikan.</p>
+              {eligibleSuccessors.map((child) => (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  key={child.id}
+                  disabled={isBusy}
+                  onClick={() => void onContinueAsHeir(child.id)}
+                >
+                  {child.name} · {character.currentYear - child.birthYear} tahun · {money(child.inheritanceCash ?? 0, currencyCode)}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p>Belum ada anak dewasa yang dapat meneruskan cerita ini. Kamu tetap dapat memulai kehidupan baru di slot berbeda.</p>
+          )}
         </section>
       )}
     </>
@@ -396,17 +549,6 @@ function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: 
     <div className="page-intro subpage-intro">
       <div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>
     </div>
-  );
-}
-
-function DevelopmentPage({ title }: { title: string }) {
-  return (
-    <section className="panel development-panel">
-      <div className="development-icon"><Settings size={24} aria-hidden="true" /></div>
-      <span className="eyebrow">DALAM PENGEMBANGAN</span>
-      <h2>{title}</h2>
-      <p>Bagian ini belum tersedia di versi saat ini. Tidak ada aksi atau simulasi yang dijalankan di sini.</p>
-    </section>
   );
 }
 
@@ -454,7 +596,7 @@ function FinancePage({
       <FinancialOverview character={character} />
       <section className="panel">
         <div className="panel-heading"><div><span className="eyebrow">PERENCANAAN</span><h2>Anggaran bulanan</h2></div></div>
-        <p className="footnote">Anggaran yang disimpan dipakai sebagai biaya rumah tangga saat Age Up berikutnya. Nilai akan menyesuaikan inflasi simulasi.</p>
+        <p className="footnote">Anggaran yang disimpan menjadi pengeluaran rutin setiap bulan. Nilai menyesuaikan inflasi simulasi.</p>
         <div className="economy-budget-grid">
           {budgetCategories.map(({ id, label }) => (
             <label className="education-effort" key={id}>{label}
@@ -498,7 +640,7 @@ function FinancePage({
       </section>
       <section className="panel">
         <div className="panel-heading"><div><span className="eyebrow">PINJAMAN</span><h2>Utang dan cicilan</h2></div><span className="quiet-label">Batas simulasi {money(loanLimit, currencyCode)}</span></div>
-        <p className="footnote">Pinjaman memiliki bunga tetap 9% per tahun dan jadwal pembayaran lima tahun. Pembayaran tahunan hanya dilakukan sesuai saldo yang tersedia.</p>
+        <p className="footnote">Pinjaman memiliki bunga 9% per tahun dengan cicilan bulanan selama lima tahun. Pembayaran menyesuaikan saldo yang tersedia.</p>
         <div className="economy-action-row">
           <label className="education-effort">Jumlah pinjaman
             <input type="number" min={1_000_000} max={loanLimit} step={500_000} value={loanAmount} disabled={isBusy} onChange={(event) => setLoanAmount(event.target.value)} />
@@ -508,7 +650,7 @@ function FinancePage({
         <div className="loan-list">
           {character.economyRecord.loans.map((loan) => (
             <article className="education-option" key={loan.id}>
-              <div><b>{loan.name} · {loan.status === 'active' ? 'Aktif' : 'Lunas'}</b><p>Sisa {money(loan.balance, currencyCode)} · Bunga 9% · Pembayaran tahunan {money(loan.annualPayment, currencyCode)}</p></div>
+              <div><b>{loan.name} · {loan.status === 'active' ? 'Aktif' : 'Lunas'}</b><p>Sisa {money(loan.balance, currencyCode)} · Bunga 9% per tahun · Cicilan bulanan sekitar {money(Math.ceil(loan.annualPayment / 12), currencyCode)}</p></div>
               {loan.status === 'active' && <button className="secondary-button" disabled={isBusy || character.cash <= 0} onClick={() => void onRepayLoan(loan.id, Math.min(loan.balance, loan.annualPayment, character.cash))}>Bayar {money(Math.min(loan.balance, loan.annualPayment, character.cash), currencyCode)}</button>}
             </article>
           ))}
@@ -566,7 +708,7 @@ function PropertyPage({
             && !(property.type === 'primary' && ownsPrimary);
           return (
             <article className="education-option" key={property.id}>
-              <div><b>{property.name}</b><p>{property.description} · Harga {money(price, currencyCode)} · Sewa tahunan {money(Math.round(property.annualRent * factor), currencyCode)} · Perawatan {money(Math.round(property.annualMaintenanceCost * factor), currencyCode)}</p></div>
+              <div><b>{property.name}</b><p>{property.description} · Harga {money(price, currencyCode)} · Sewa bulanan {money(Math.round(property.annualRent * factor / 12), currencyCode)} · Perawatan bulanan {money(Math.round(property.annualMaintenanceCost * factor / 12), currencyCode)}</p></div>
               <button className="secondary-button" disabled={isBusy || !canBuy} onClick={() => void onBuy(property.id)}>Beli</button>
             </article>
           );
@@ -577,7 +719,7 @@ function PropertyPage({
         <div className="panel-heading"><div><span className="eyebrow">ASET MILIKMU</span><h2>{properties.length} properti</h2></div></div>
         {properties.map((property) => (
           <article className="education-option" key={property.id}>
-            <div><b>{property.name}</b><p>Nilai {money(property.value, currencyCode)} · {property.propertyType === 'primary' ? 'Tempat tinggal' : property.propertyType === 'rental' ? `Sewa tahunan ${money(property.annualRent ?? 0, currencyCode)}` : 'Tanah'} · Perawatan tahunan {money(property.annualMaintenanceCost ?? 0, currencyCode)}</p></div>
+            <div><b>{property.name}</b><p>Nilai {money(property.value, currencyCode)} · {property.propertyType === 'primary' ? 'Tempat tinggal' : property.propertyType === 'rental' ? `Sewa bulanan ${money(Math.round((property.annualRent ?? 0) / 12), currencyCode)}` : 'Tanah'} · Perawatan bulanan {money(Math.round((property.annualMaintenanceCost ?? 0) / 12), currencyCode)}</p></div>
             <button className="secondary-button" disabled={isBusy} onClick={() => void onSell(property.id)}>Jual · {money(Math.round(property.value * 0.95), currencyCode)}</button>
           </article>
         ))}
@@ -771,7 +913,7 @@ function CareerPage({
               <div><span>Gaji bulanan</span><b>{money(record.monthlySalary, currencyCode)}</b></div>
               <div><span>Pengalaman</span><b>{record.experienceYears} tahun</b></div>
               <div><span>Kepuasan kerja</span><b>{record.satisfaction}/100</b></div>
-              <div><span>Pemasukan terakhir</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
+              <div><span>Pemasukan tahun ini</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
             </div>
             {canReceivePromotion(character) && <button className="secondary-button" disabled={isBusy} onClick={() => onChange({ type: 'promote' })}>Ajukan promosi</button>}
             {character.age >= 60 && record.status === 'employed' && <button className="secondary-button" disabled={isBusy} onClick={() => onChange({ type: 'retire' })}>Mulai pensiun</button>}
@@ -853,10 +995,8 @@ function RelationshipsPage({
   isBusy: boolean;
 }) {
   const factor = getNominalPriceFactor(character.currentYear);
-  const activePartner = character.relationships.find((item) => (
-    item.stage === 'married' && item.status === 'active'
-  ));
-  const availableRelationships = character.relationships.filter((item) => item.kind !== 'child');
+  const activePartner = getCurrentSpouse(character);
+  const availableRelationships = getVisibleRelationships(character);
   const simpleWeddingCost = Math.round(500_000 * factor);
   const celebrationCost = Math.round(5_000_000 * factor);
   const getRelationshipStage = (stage?: RomanticRelationshipStage) => (
@@ -970,6 +1110,277 @@ function RelationshipsPage({
   );
 }
 
+function DigitalLifePage({
+  character,
+  onBuySmartphone,
+  onSellSmartphone,
+  onBuyDataPackage,
+  onBuyCreatorEquipment,
+  onCreateAccount,
+  onActivateMonetization,
+  onPublishContent,
+  isBusy,
+}: {
+  character: Character;
+  onBuySmartphone: (modelId: string, condition?: 'new' | 'used') => Promise<boolean>;
+  onSellSmartphone: () => Promise<boolean>;
+  onBuyDataPackage: (packageId: string) => Promise<boolean>;
+  onBuyCreatorEquipment: (equipmentId: string) => Promise<boolean>;
+  onCreateAccount: (platformId: DigitalPlatformId, username: string) => Promise<boolean>;
+  onActivateMonetization: (accountId: string) => Promise<boolean>;
+  onPublishContent: (input: {
+    accountId: string;
+    category: DigitalContentCategory;
+    title: string;
+    description: string;
+  }) => Promise<boolean>;
+  isBusy: boolean;
+}) {
+  const [selectedApp, setSelectedApp] = useState<DigitalAppId>('wallet');
+  const [platformId, setPlatformId] = useState<DigitalPlatformId>('indotube');
+  const [username, setUsername] = useState('');
+  const [accountId, setAccountId] = useState('');
+  const [category, setCategory] = useState<DigitalContentCategory>('vlog');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const currencyCode = character.birthInformation.location.currencyCode;
+  const smartphone = character.digitalLife.smartphone;
+  const phoneModel = smartphone ? getSmartphoneModel(smartphone.modelId) : null;
+  const availableApps = digitalApps.filter((app) => (
+    app.releaseYear <= character.currentYear
+      && (smartphone
+        ? smartphone.installedApps.includes(app.id)
+        : app.id === 'market' || app.id === 'wallet')
+  ));
+  const availablePlatforms = digitalPlatforms.filter((platform) => (
+    platform.releaseYear <= character.currentYear
+  ));
+  const currentAccount = character.digitalLife.accounts.find((account) => account.id === accountId)
+    ?? character.digitalLife.accounts[0];
+  const currentIndex = character.currentYear * 12 + character.currentMonth - 1;
+  const dataPlan = smartphone?.dataPlan;
+  const productionCost = getDigitalProductionCost(character);
+  const planExpired = !dataPlan || dataPlan.expiresAtMonthIndex <= currentIndex
+    || dataPlan.remainingMb <= 0;
+  const canCreateAccount = Boolean(smartphone && character.age >= 13 && availablePlatforms.some(
+    (platform) => platform.id === platformId
+      && !character.digitalLife.accounts.some((account) => account.platform === platformId),
+  ) && /^[a-z0-9._]{3,20}$/i.test(username.trim()));
+  const selectedAppIcon: Record<DigitalAppId, LucideIcon> = {
+    social: Users,
+    creator: Camera,
+    market: ShoppingBag,
+    wallet: CreditCard,
+  };
+  const accountPlatform = currentAccount ? getDigitalPlatform(currentAccount.platform) : null;
+
+  return (
+    <>
+      <PageHeading eyebrow="SMARTPHONE & DIGITAL LIFE" title="Kehidupan digital" description="Ponsel, paket data, jejaring sosial, dan konten kreator terhubung langsung ke saldo, aset, statistik, dan riwayat hidup." />
+      {character.currentYear < 2007 ? (
+        <section className="panel">
+          <span className="eyebrow">BELUM TERSEDIA</span>
+          <h2>Smartphone belum hadir di era ini</h2>
+          <p className="footnote">Katalog ponsel dan aplikasi digital baru terbuka mulai 2007.</p>
+        </section>
+      ) : (
+        <>
+          <section className="panel">
+            <div className="panel-heading">
+              <div><span className="eyebrow">APP LAUNCHER</span><h2>Aplikasi ponsel</h2></div>
+              <Smartphone size={19} aria-hidden="true" />
+            </div>
+            {smartphone
+              ? <p className="footnote">{phoneModel?.name ?? smartphone.modelId} · Kondisi {Math.round(smartphone.condition)}% · Nomor {smartphone.phoneNumber}</p>
+              : <p className="empty-copy">Belum memiliki smartphone. Gunakan Pasar Digital untuk membeli perangkat pertamamu.</p>}
+            <div className="digital-app-launcher">
+              {availableApps.map((app) => {
+                const Icon = selectedAppIcon[app.id];
+                return (
+                  <button
+                    key={app.id}
+                    type="button"
+                    className={`digital-app-button${selectedApp === app.id ? ' is-active' : ''}`}
+                    aria-pressed={selectedApp === app.id}
+                    onClick={() => setSelectedApp(app.id)}
+                  >
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{app.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {selectedApp === 'market' && (
+            <section className="panel">
+              <div className="panel-heading"><div><span className="eyebrow">PASAR DIGITAL</span><h2>Perangkat dan studio</h2></div></div>
+              {character.age < 13 && <p className="footnote">Pembelian perangkat pribadi tersedia mulai usia 13 tahun.</p>}
+              <div className="education-options">
+                {smartphoneModels.filter((model) => model.releaseYear <= character.currentYear).map((model) => {
+                  const price = Math.round(model.price * getNominalPriceFactor(character.currentYear));
+                  const existingModel = phoneModel;
+                  const canUpgrade = !existingModel || model.creatorQuality > existingModel.creatorQuality;
+                  const isCurrent = smartphone?.modelId === model.id;
+                  const availableCash = character.cash
+                    + (smartphone
+                      ? Math.round((character.assets.find((asset) => asset.id === smartphone.assetId)?.value ?? 0) * 0.55)
+                      : 0);
+                  return (
+                    <article className="education-option" key={model.id}>
+                      <div><b>{model.name}</b><p>Dirilis {model.releaseYear} · Kualitas kreator {model.creatorQuality}/100 · Harga {money(price, currencyCode)}</p></div>
+                      <div className="digital-action-buttons">
+                        <button className="secondary-button" disabled={isBusy || character.age < 13 || !canUpgrade || isCurrent || availableCash < price} onClick={() => void onBuySmartphone(model.id, 'new')}>{isCurrent ? 'Sedang dipakai' : 'Beli baru'}</button>
+                        <button className="secondary-button" disabled={isBusy || character.age < 13 || !canUpgrade || isCurrent || availableCash < Math.round(price * 0.62)} onClick={() => void onBuySmartphone(model.id, 'used')}>Beli bekas</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {smartphone && <button className="secondary-button" disabled={isBusy} onClick={() => void onSellSmartphone()}>Jual ponsel · {money(Math.round((character.assets.find((asset) => asset.id === smartphone.assetId)?.value ?? 0) * 0.5), currencyCode)}</button>}
+              <h3 className="digital-section-title">Peralatan kreator</h3>
+              {creatorEquipment.filter((item) => item.releaseYear <= character.currentYear).map((equipment) => {
+                const owned = character.assets.some((asset) => asset.id === `gear-${character.id}-${equipment.id}`);
+                const price = Math.round(equipment.price * getNominalPriceFactor(character.currentYear));
+                return (
+                  <article className="education-option" key={equipment.id}>
+                    <div><b>{equipment.name}</b><p>Kualitas +{equipment.quality} · Harga {money(price, currencyCode)}</p></div>
+                    <button className="secondary-button" disabled={isBusy || character.age < 13 || owned || character.cash < price} onClick={() => void onBuyCreatorEquipment(equipment.id)}>{owned ? 'Dimiliki' : 'Beli'}</button>
+                  </article>
+                );
+              })}
+            </section>
+          )}
+
+          {selectedApp === 'wallet' && (
+            <section className="panel">
+              <div className="panel-heading"><div><span className="eyebrow">DOMPET</span><h2>Saldo dan paket data</h2></div><CreditCard size={19} aria-hidden="true" /></div>
+              <div className="finance-detail">
+                <div><span>Saldo utama permainan</span><b>{money(character.cash, currencyCode)}</b></div>
+                <div><span>Pemasukan tercatat</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
+                <div><span>Pengeluaran tercatat</span><b>{money(character.lastYearExpenses, currencyCode)}</b></div>
+              </div>
+              {smartphone && dataPlan && !planExpired && (
+                <p className="footnote">{dataPackages.find((item) => item.id === dataPlan.packageId)?.name ?? 'Paket data'} · {Math.round(dataPlan.remainingMb)} MB tersisa · Berakhir {getMonthName((dataPlan.expiresAtMonthIndex % 12) + 1)} {Math.floor(dataPlan.expiresAtMonthIndex / 12)}</p>
+              )}
+              {smartphone ? (
+                dataPackages.map((dataPackage) => {
+                  const price = Math.round(dataPackage.price * getNominalPriceFactor(character.currentYear));
+                  return (
+                    <article className="education-option" key={dataPackage.id}>
+                      <div><b>{dataPackage.name}</b><p>{dataPackage.dataMb.toLocaleString('id-ID')} MB · {dataPackage.durationMonths} bulan · {money(price, currencyCode)}</p></div>
+                      <button className="secondary-button" disabled={isBusy || !planExpired || character.cash < price} onClick={() => void onBuyDataPackage(dataPackage.id)}>Beli paket</button>
+                    </article>
+                  );
+                })
+              ) : <p className="empty-copy">Beli smartphone untuk mengaktifkan paket data.</p>}
+              {character.digitalLife.transactions.length > 0 && (
+                <>
+                  <h3 className="digital-section-title">Transaksi digital terbaru</h3>
+                  {character.digitalLife.transactions.slice(-5).reverse().map((transaction) => (
+                    <article className="event-history-entry" key={transaction.id}>
+                      <span>{getMonthName(transaction.month)} {transaction.year} · {transaction.type === 'creator_income' || transaction.type === 'phone_sale' ? 'Pemasukan' : 'Pengeluaran'}</span>
+                      <b>{transaction.description}</b>
+                      <p>{money(transaction.amount, currencyCode)}</p>
+                    </article>
+                  ))}
+                </>
+              )}
+            </section>
+          )}
+
+          {selectedApp === 'social' && (
+            <section className="panel">
+              <div className="panel-heading"><div><span className="eyebrow">JARINGAN</span><h2>Profil dan audiens</h2></div><Users size={19} aria-hidden="true" /></div>
+              {character.age < 13 && <p className="footnote">Pembuatan akun tersedia mulai usia 13 tahun.</p>}
+              {smartphone && availablePlatforms.length > 0 && (
+                <div className="digital-form">
+                  <label className="education-effort">Platform
+                    <select value={platformId} disabled={isBusy} onChange={(event) => setPlatformId(event.target.value as DigitalPlatformId)}>
+                      {availablePlatforms.map((platform) => <option key={platform.id} value={platform.id} disabled={character.digitalLife.accounts.some((account) => account.platform === platform.id)}>{platform.name}{character.digitalLife.accounts.some((account) => account.platform === platform.id) ? ' · akun dibuat' : ''}</option>)}
+                    </select>
+                  </label>
+                  <label className="education-effort">Nama pengguna
+                    <input value={username} maxLength={20} disabled={isBusy} onChange={(event) => setUsername(event.target.value)} placeholder="namapengguna" />
+                  </label>
+                  <button className="primary-button compact-button" disabled={isBusy || !canCreateAccount} onClick={() => void onCreateAccount(platformId, username)}>Buat akun</button>
+                </div>
+              )}
+              {character.digitalLife.accounts.map((account) => {
+                const platform = getDigitalPlatform(account.platform);
+                const audience = account.platform === 'indotube' ? account.subscribers : account.followers;
+                return (
+                  <article className="education-option" key={account.id}>
+                    <div><b>{platform.name} · @{account.username}</b><p>{audience.toLocaleString('id-ID')} {platform.audienceLabel} · {account.totalViews.toLocaleString('id-ID')} tayangan · {account.monetized ? 'Monetisasi aktif' : 'Monetisasi belum aktif'}</p></div>
+                    {!account.monetized && (
+                      <button className="secondary-button" disabled={isBusy || !canMonetizeAccount(account)} onClick={() => void onActivateMonetization(account.id)}>{canMonetizeAccount(account) ? 'Aktifkan monetisasi' : `Syarat: ${platform.monetizationAudienceThreshold.toLocaleString('id-ID')} audiens & ${platform.monetizationViewThreshold.toLocaleString('id-ID')} tayangan`}</button>
+                    )}
+                  </article>
+                );
+              })}
+              {character.digitalLife.accounts.length === 0 && <p className="empty-copy">Belum ada akun sosial. Buat akun setelah memiliki ponsel.</p>}
+              <p className="footnote">Level kreator: {getDigitalCreatorLevel(character)}. Audiens tumbuh dari hasil konten, dan monetisasi baru tersedia setelah syarat platform terpenuhi.</p>
+            </section>
+          )}
+
+          {selectedApp === 'creator' && (
+            <section className="panel">
+              <div className="panel-heading"><div><span className="eyebrow">KAMERA & STUDIO</span><h2>Produksi konten</h2></div><Camera size={19} aria-hidden="true" /></div>
+              {smartphone && character.digitalLife.accounts.length > 0 ? (
+                <div className="digital-form">
+                  <label className="education-effort">Akun
+                    <select value={currentAccount?.id ?? ''} disabled={isBusy} onChange={(event) => setAccountId(event.target.value)}>
+                      {character.digitalLife.accounts.map((account) => <option key={account.id} value={account.id}>{getDigitalPlatform(account.platform).name} · @{account.username}</option>)}
+                    </select>
+                  </label>
+                  <label className="education-effort">Kategori
+                    <select value={category} disabled={isBusy} onChange={(event) => setCategory(event.target.value as DigitalContentCategory)}>
+                      {digitalContentCategories.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="education-effort">Judul
+                    <input value={title} maxLength={100} disabled={isBusy} onChange={(event) => setTitle(event.target.value)} placeholder="Judul kontenmu" />
+                  </label>
+                  <label className="education-effort">Deskripsi
+                    <input value={description} maxLength={300} disabled={isBusy} onChange={(event) => setDescription(event.target.value)} placeholder="Ceritakan isi konten" />
+                  </label>
+                  <button
+                    className="primary-button compact-button"
+                    disabled={isBusy || character.age < 13 || smartphone.condition < 10
+                      || !dataPlan || dataPlan.expiresAtMonthIndex <= currentIndex
+                      || dataPlan.remainingMb < (accountPlatform?.uploadDataMb ?? 0)
+                      || productionCost === null || character.cash < productionCost
+                      || title.trim().length < 3 || title.trim().length > 100
+                      || description.trim().length > 300}
+                    onClick={() => void onPublishContent({
+                      accountId: currentAccount?.id ?? '',
+                      category,
+                      title,
+                      description,
+                    })}
+                  >
+                    Unggah konten
+                  </button>
+                  <p className="footnote">Unggah memakai {accountPlatform?.uploadDataMb ?? 0} MB dan biaya produksi {productionCost === null ? '—' : money(productionCost, currencyCode)}; setiap unggahan mengurangi energi. Konten populer dapat meningkatkan kebahagiaan, reputasi sosial, dan peluang karier.</p>
+                </div>
+              ) : <p className="empty-copy">Miliki ponsel dan buat akun sosial untuk mulai mengunggah.</p>}
+              <h3 className="digital-section-title">Konten terbaru</h3>
+              {character.digitalLife.content.slice(-8).reverse().map((content) => (
+                <article className="event-history-entry" key={content.id}>
+                  <span>{getMonthName(content.month)} {content.year} · {getDigitalPlatform(content.platform).name} · {content.performance}</span>
+                  <b>{content.title}</b>
+                  <p>{content.views.toLocaleString('id-ID')} tayangan · {content.likes.toLocaleString('id-ID')} suka · +{content.newFollowers.toLocaleString('id-ID')} audiens · Pendapatan {money(content.revenue, currencyCode)}</p>
+                </article>
+              ))}
+              {character.digitalLife.content.length === 0 && <p className="empty-copy">Belum ada konten yang diunggah.</p>}
+            </section>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function HistoryPage({ history }: { history: string[] }) {
   return (
     <>
@@ -985,12 +1396,42 @@ function HistoryPage({ history }: { history: string[] }) {
   );
 }
 
+function ActivityPage({
+  history,
+  eventProgress,
+}: {
+  history: string[];
+  eventProgress: EventProgress;
+}) {
+  const recentEvents = eventProgress.history.slice(-12).reverse();
+  return (
+    <>
+      <PageHeading eyebrow="AKTIVITAS" title="Aktivitas terbaru" description="Perkembangan bulanan dan pilihan kejadian yang tercatat dalam cerita." />
+      <section className="panel history-full-panel">
+        <div className="panel-heading"><h2>Catatan terbaru</h2><span className="quiet-label">{history.length} catatan</span></div>
+        <LifeHistory history={history.slice(-12)} />
+      </section>
+      <section className="panel">
+        <div className="panel-heading"><h2>Pilihan kejadian terbaru</h2><span className="quiet-label">{eventProgress.history.length} pilihan</span></div>
+        {recentEvents.length > 0 ? recentEvents.map((entry) => (
+          <article className="event-history-entry" key={`${entry.eventId}-${entry.year}-${entry.month ?? 0}-${entry.choiceId}`}>
+            <span>{eventDateLabel(entry.year, entry.month)} · {eventCategoryLabels[entry.category] ?? entry.category}</span>
+            <b>{entry.title}: {entry.choiceLabel}</b>
+            <p>{entry.outcomeText}</p>
+          </article>
+        )) : <p className="empty-copy">Belum ada pilihan kejadian yang tercatat.</p>}
+      </section>
+    </>
+  );
+}
+
 function FamilyPage({
   character,
   onInteract,
   onChildInteraction,
   onCreateChild,
   onSetParentingStyle,
+  onSetEstatePlan,
   isBusy,
 }: {
   character: Character;
@@ -998,6 +1439,7 @@ function FamilyPage({
   onChildInteraction: (id: string, action: ChildInteraction) => Promise<boolean>;
   onCreateChild: (name: string, adopted?: boolean) => Promise<boolean>;
   onSetParentingStyle: (id: string, style: NonNullable<ChildRecord['parentingStyle']>) => Promise<boolean>;
+  onSetEstatePlan: (distribution: EstateDistributionRule, namedHeirId?: string | null) => Promise<boolean>;
   isBusy: boolean;
 }) {
   const [childName, setChildName] = useState('');
@@ -1031,6 +1473,7 @@ function FamilyPage({
   const canAdopt = canParent && character.age >= 25 && character.cash >= adoptionFee;
   const grandparents = character.family.members.filter((member) => member.role === 'grandparent');
   const closeFamily = character.family.members.filter((member) => member.role !== 'grandparent');
+  const livingChildren = character.children.filter((child) => child.lifeStatus !== 'deceased');
   const statusOfChild = (child: ChildRecord) => child.lifeStatus === 'deceased' ? 'Telah meninggal' : 'Masih hidup';
   const childAge = (child: ChildRecord) => Math.max(0, character.currentYear - child.birthYear);
 
@@ -1181,6 +1624,74 @@ function FamilyPage({
         <div className="panel-heading"><div><span className="eyebrow">CATATAN KELUARGA</span><h2>Riwayat keluarga</h2></div></div>
         {character.family.history.map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>)}
       </section>
+      <section className="panel">
+        <div className="panel-heading"><div><span className="eyebrow">SILSILAH</span><h2>Generasi keluarga</h2></div></div>
+        {character.ancestors.length > 0 ? (
+          <ol className="lineage-list">
+            {[...character.ancestors].reverse().map((ancestor) => (
+              <li key={ancestor.id}>
+                <b>{ancestor.name}</b>
+                <span>Generasi {ancestor.generation + 1} · lahir {ancestor.birthYear} · wafat {ancestor.deathYear}</span>
+                <small>{ancestor.children.length} anak tercatat · harta simulasi saat wafat {money(ancestor.netWorthAtDeath, character.birthInformation.location.currencyCode)}</small>
+              </li>
+            ))}
+            <li className="current-generation">
+              <b>{getCharacterName(character)}</b>
+              <span>Generasi {character.generation + 1} · {character.age} tahun · {character.status === 'alive' ? 'masih hidup' : 'telah meninggal'}</span>
+              <small>{character.children.length} anak tercatat</small>
+            </li>
+          </ol>
+        ) : (
+          <p>Generasi pertama dalam catatan silsilah ini. Penerus yang dimainkan akan tercatat di sini.</p>
+        )}
+      </section>
+      <section className="panel">
+        <div className="panel-heading"><div><span className="eyebrow">PERENCANAAN SIMULASI</span><h2>Rencana warisan keluarga</h2></div></div>
+        <p className="footnote">Aturan ini hanya mekanik permainan, bukan panduan atau representasi hukum waris Indonesia. Nilai aset dan utang dihitung sebelum pembagian.</p>
+        {character.status === 'alive' && character.age >= 18 ? (
+          <>
+            <label className="education-effort">Cara pembagian
+              <select
+                value={character.estatePlan.distribution}
+                disabled={isBusy}
+                onChange={(event) => {
+                  const distribution = event.target.value as EstateDistributionRule;
+                  if (distribution === 'named_heir') {
+                    if (livingChildren[0]) void onSetEstatePlan(distribution, livingChildren[0].id);
+                  } else {
+                    void onSetEstatePlan(distribution, null);
+                  }
+                }}
+              >
+                <option value="equal_heirs">Dibagi rata kepada pasangan dan anak</option>
+                <option value="spouse_priority">Pasangan 50%, sisanya dibagi kepada anak</option>
+                <option value="named_heir" disabled={livingChildren.length === 0}>Penerus pilihan menerima 60%</option>
+              </select>
+            </label>
+            {character.estatePlan.distribution === 'named_heir' && (
+              <label className="education-effort">Penerus pilihan
+                <select
+                  value={character.estatePlan.namedHeirId ?? ''}
+                  disabled={isBusy}
+                  onChange={(event) => void onSetEstatePlan('named_heir', event.target.value)}
+                >
+                  {livingChildren.map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}
+                </select>
+              </label>
+            )}
+          </>
+        ) : (
+          <p className="empty-copy">Rencana warisan dapat diatur oleh karakter dewasa yang masih hidup.</p>
+        )}
+        {character.estateSettlement && (
+          <div className="estate-summary">
+            <p>Harta bersih: {money(character.estateSettlement.netValue, character.birthInformation.location.currencyCode)}</p>
+            {character.estateSettlement.shares.map((share) => (
+              <p key={share.beneficiaryId}>{share.beneficiaryName}: {money(share.amount, character.birthInformation.location.currencyCode)}</p>
+            ))}
+          </div>
+        )}
+      </section>
     </>
   );
 }
@@ -1196,10 +1707,15 @@ function FamilyMemberCard({
   statusLabel: string;
   currentYear: number;
 }) {
+  const occupation = getOccupation(member.occupationId ?? null);
   return (
     <article className="family-member">
       <div className="family-member-avatar">{member.name.slice(0, 1)}</div>
-      <div className="family-member-details"><b>{member.name}</b><span>{roleLabel}{member.birthYear ? ` · sekitar ${currentYear - member.birthYear} tahun` : ''}</span></div>
+      <div className="family-member-details">
+        <b>{member.name}</b>
+        <span>{roleLabel}{member.birthYear ? ` · sekitar ${currentYear - member.birthYear} tahun` : ''}</span>
+        {occupation && <span>Pekerjaan: {occupation.name}</span>}
+      </div>
       <div className="family-member-status"><b>{statusLabel}</b>{member.status === 'unknown' && <span>Belum tercatat</span>}</div>
     </article>
   );
@@ -1216,20 +1732,98 @@ const persistenceLabels: Record<PersistenceStatus, string> = {
 function SettingsPage({
   persistenceStatus,
   persistenceError,
+  selectedSaveSlotId,
+  saveSlots,
   onSave,
+  onSelectSaveSlot,
+  onCreateSaveSlot,
+  onImportBackup,
 }: {
   persistenceStatus: PersistenceStatus;
   persistenceError: string | null;
   onSave: () => void;
+  selectedSaveSlotId: string;
+  saveSlots: SaveSlotSummary[];
+  onSelectSaveSlot: (slotId: string) => void;
+  onCreateSaveSlot: () => void;
+  onImportBackup: (file: File) => void;
 }) {
+  const selectedSlot = saveSlots.find((slot) => slot.id === selectedSaveSlotId);
+
+  const downloadBackup = async () => {
+    try {
+      const backup = await exportGameBackup(selectedSaveSlotId);
+      const blob = new Blob([backup], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `indolife-${(selectedSlot?.characterName ?? 'cadangan').toLowerCase().replace(/[^a-z0-9-]+/g, '-')}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <>
       <PageHeading eyebrow="PREFERENSI" title="Pengaturan" description="Status fitur yang tersedia pada versi saat ini." />
       <section className="panel settings-list">
         <div className="setting-row">
-          <div className="setting-icon">{persistenceStatus === 'saved' ? <Cloud size={19} aria-hidden="true" /> : <CloudOff size={19} aria-hidden="true" />}</div>
-          <div><b>Penyimpanan permainan</b><p>Simpanan lokal satu slot di perangkat ini. Progres otomatis disimpan setelah perubahan.</p></div>
+          <div className="setting-icon"><HardDrive size={19} aria-hidden="true" /></div>
+          <div><b>Penyimpanan permainan</b><p>Beberapa slot lokal dengan penyimpanan otomatis. Cloud-save opsional belum dikonfigurasi.</p></div>
           <span className={`status-tag save-state-${persistenceStatus}`}>{persistenceLabels[persistenceStatus]}</span>
+        </div>
+        <div className="save-management">
+          <label htmlFor="save-slot">Cerita tersimpan</label>
+          <select
+            id="save-slot"
+            value={selectedSaveSlotId}
+            disabled={persistenceStatus === 'saving' || persistenceStatus === 'error' || saveSlots.length === 0}
+            onChange={(event) => onSelectSaveSlot(event.target.value)}
+          >
+            {saveSlots.map((slot) => (
+              <option key={slot.id} value={slot.id}>
+                {slot.characterName} · {slot.age} th · {getMonthName(slot.month)} {slot.year}
+              </option>
+            ))}
+          </select>
+          <div className="save-management-actions">
+            <button type="button" className="secondary-button" disabled={!selectedSlot || persistenceStatus === 'saving'} onClick={() => void downloadBackup()}>
+              Unduh cadangan
+            </button>
+            <label className={`secondary-button backup-import-button${persistenceStatus === 'saving' ? ' is-disabled' : ''}`} htmlFor="backup-file">
+              Pulihkan cadangan
+              <input
+                id="backup-file"
+                type="file"
+                accept="application/json,.json"
+                disabled={persistenceStatus === 'saving'}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file && file.size <= 10 * 1024 * 1024
+                    && window.confirm('Cadangan akan mengganti cerita yang sedang dipilih. Lanjutkan?')) {
+                    onImportBackup(file);
+                  } else if (file && file.size > 10 * 1024 * 1024) {
+                    window.alert('Ukuran file cadangan maksimal 10 MB.');
+                  }
+                  event.currentTarget.value = '';
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary-button compact-button"
+              disabled={persistenceStatus === 'saving' || persistenceStatus === 'error'}
+              onClick={() => {
+                if (window.confirm('Cerita saat ini akan tetap tersimpan. Mulai cerita baru di slot terpisah?')) {
+                  onCreateSaveSlot();
+                }
+              }}
+            >
+              Mulai cerita baru
+            </button>
+          </div>
         </div>
         <div className="setting-row">
           <div className="setting-icon"><Settings size={19} aria-hidden="true" /></div>
@@ -1244,6 +1838,7 @@ function SettingsPage({
 
 export default function App() {
   const [page, setPage] = useState<PageId>('home');
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
   const {
     character,
@@ -1254,9 +1849,18 @@ export default function App() {
     isHydrated,
     persistenceStatus,
     persistenceError,
+    selectedSaveSlotId,
+    saveSlots,
+    setEstatePlan,
+    continueAsHeir,
     hydrate,
+    selectSaveSlot,
+    createNewSaveSlot,
+    importGameBackup,
     chooseEventChoice,
+    advanceMonth,
     advanceYear,
+    advanceMode,
     enrollInProgram,
     applyForScholarship,
     setStudyEffort,
@@ -1288,6 +1892,13 @@ export default function App() {
     repayLoan,
     startBusiness,
     closeBusiness,
+    buySmartphone,
+    sellSmartphone,
+    buyMobileDataPackage,
+    buyCreatorEquipment,
+    createSocialAccount,
+    activateDigitalMonetization,
+    publishDigitalContent,
     saveCurrentGame,
   } = useGameStore();
   useEffect(() => {
@@ -1301,19 +1912,29 @@ export default function App() {
 
   const currentPage = navigationItems.find((item) => item.id === page) ?? navigationItems[0];
   const CurrentPageIcon = currentPage.icon;
-  const SaveIcon = persistenceStatus === 'saved' || persistenceStatus === 'saving' ? Cloud : CloudOff;
+  const SaveIcon = HardDrive;
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setPage('home'); }}>
+        <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setPage('home'); setNavigationOpen(false); }}>
           <span className="brand-mark"><Home size={21} aria-hidden="true" /></span>
           <span><b>INDOLIFE</b><small>SIMULATOR KEHIDUPAN</small></span>
         </a>
+        <button
+          type="button"
+          className="icon-button navigation-toggle"
+          aria-label={navigationOpen ? 'Tutup navigasi utama' : 'Buka navigasi utama'}
+          aria-expanded={navigationOpen}
+          aria-controls="primary-navigation"
+          onClick={() => setNavigationOpen(!navigationOpen)}
+        >
+          {navigationOpen ? <X size={19} aria-hidden="true" /> : <Menu size={19} aria-hidden="true" />}
+        </button>
         <div className="topbar-actions">
           <div className="year-card topbar-year">
             <CalendarDays size={17} aria-hidden="true" />
-            <div><span>TAHUN</span><b>{character.currentYear}</b></div>
+            <div><span>BULAN · TAHUN</span><b>{getMonthName(character.currentMonth)} {character.currentYear}</b></div>
           </div>
           <div className={`save-indicator save-state-${persistenceStatus}`} title={persistenceError ?? persistenceLabels[persistenceStatus]} aria-live="polite">
             <SaveIcon size={16} aria-hidden="true" /><span>{persistenceLabels[persistenceStatus]}</span>
@@ -1325,7 +1946,15 @@ export default function App() {
       </header>
 
       <div className="workspace">
-        <aside className="sidebar">
+        {navigationOpen && (
+          <button
+            type="button"
+            className="navigation-backdrop"
+            aria-label="Tutup menu navigasi"
+            onClick={() => setNavigationOpen(false)}
+          />
+        )}
+        <aside className={`sidebar${navigationOpen ? ' is-open' : ''}`} id="primary-navigation" aria-hidden={!navigationOpen}>
           <span className="nav-heading">MENU UTAMA</span>
           <nav aria-label="Navigasi utama">
             <ul className="nav-list">
@@ -1334,7 +1963,7 @@ export default function App() {
                   <button
                     className={`nav-link${page === id ? ' is-active' : ''}`}
                     aria-current={page === id ? 'page' : undefined}
-                    onClick={() => setPage(id)}
+                    onClick={() => { setPage(id); setNavigationOpen(false); }}
                   >
                     <Icon size={18} aria-hidden="true" /><span>{label}</span>
                   </button>
@@ -1365,12 +1994,16 @@ export default function App() {
               activeEvent={activeEvent}
               eventProgress={eventProgress}
               chooseEventChoice={chooseEventChoice}
+              advanceMonth={advanceMonth}
               advanceYear={advanceYear}
+              advanceMode={advanceMode}
               isAdvancing={isAdvancing}
               isBusy={isAdvancing || persistenceStatus === 'saving'}
               onEditCharacter={() => setEditingProfile(true)}
+              onContinueAsHeir={continueAsHeir}
             />
           )}
+          {page === 'activity' && <ActivityPage history={history} eventProgress={eventProgress} />}
           {page === 'finance' && (
             <FinancePage
               character={character}
@@ -1381,6 +2014,19 @@ export default function App() {
               onRepayLoan={repayLoan}
               onStartBusiness={startBusiness}
               onCloseBusiness={closeBusiness}
+              isBusy={isAdvancing || persistenceStatus === 'saving' || activeEvent !== null}
+            />
+          )}
+          {page === 'digital' && (
+            <DigitalLifePage
+              character={character}
+              onBuySmartphone={buySmartphone}
+              onSellSmartphone={sellSmartphone}
+              onBuyDataPackage={buyMobileDataPackage}
+              onBuyCreatorEquipment={buyCreatorEquipment}
+              onCreateAccount={createSocialAccount}
+              onActivateMonetization={activateDigitalMonetization}
+              onPublishContent={publishDigitalContent}
               isBusy={isAdvancing || persistenceStatus === 'saving' || activeEvent !== null}
             />
           )}
@@ -1435,13 +2081,28 @@ export default function App() {
               onChildInteraction={interactWithChild}
               onCreateChild={createChild}
               onSetParentingStyle={setChildParentingStyle}
+              onSetEstatePlan={setEstatePlan}
               isBusy={isAdvancing || persistenceStatus === 'saving' || activeEvent !== null}
             />
           )}
           {page === 'history' && <HistoryPage history={history} />}
-          {page === 'settings' && <SettingsPage persistenceStatus={persistenceStatus} persistenceError={persistenceError} onSave={() => void saveCurrentGame()} />}
-          {!['home', 'finance', 'property', 'education', 'career', 'relationships', 'family', 'history', 'settings'].includes(page) && (
-            <DevelopmentPage title={currentPage.label} />
+          {page === 'settings' && (
+            <SettingsPage
+              persistenceStatus={persistenceStatus}
+              persistenceError={persistenceError}
+              selectedSaveSlotId={selectedSaveSlotId}
+              saveSlots={saveSlots}
+              onSave={() => void saveCurrentGame()}
+              onSelectSaveSlot={(slotId) => void selectSaveSlot(slotId)}
+              onCreateSaveSlot={() => void createNewSaveSlot()}
+              onImportBackup={(file) => {
+                void file.text()
+                  .then((text) => importGameBackup(text))
+                  .catch((error: unknown) => window.alert(
+                    error instanceof Error ? error.message : String(error),
+                  ));
+              }}
+            />
           )}
         </main>
       </div>

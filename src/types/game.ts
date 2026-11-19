@@ -41,6 +41,7 @@ export interface BirthEvent {
 export interface DeathRecord {
   age: number;
   year: number;
+  month?: number;
   cause: string;
 }
 
@@ -184,6 +185,7 @@ export interface ChildRecord {
   id: string;
   name: string;
   birthYear: number;
+  gender?: Gender;
   relationship: number;
   trust?: number;
   loyalty?: number;
@@ -196,23 +198,142 @@ export interface ChildRecord {
   lifeStatus?: LifeStatus;
   deathYear?: number | null;
   adopted?: boolean;
+  inheritanceCash?: number;
   history?: string[];
   parentIds?: string[];
   generation?: number;
 }
 
+export type EstateDistributionRule = 'equal_heirs' | 'spouse_priority' | 'named_heir';
+
+export interface EstatePlan {
+  distribution: EstateDistributionRule;
+  namedHeirId: string | null;
+  updatedYear: number;
+}
+
+export interface EstateShare {
+  beneficiaryId: string;
+  beneficiaryName: string;
+  beneficiaryType: 'spouse' | 'child';
+  amount: number;
+}
+
+export interface EstateSettlement {
+  year: number;
+  grossValue: number;
+  debtsPaid: number;
+  unpaidDebt: number;
+  netValue: number;
+  distribution: EstateDistributionRule;
+  shares: EstateShare[];
+}
+
+export interface AncestralRecord {
+  id: string;
+  name: string;
+  generation: number;
+  birthYear: number;
+  deathYear: number;
+  deathCause: string;
+  netWorthAtDeath: number;
+  children: string[];
+  estateSettlement: EstateSettlement | null;
+}
+
 export interface CharacterAsset {
   id: string;
   name: string;
-  category: 'home' | 'vehicle' | 'business' | 'investment' | 'other';
+  category: 'home' | 'vehicle' | 'business' | 'investment' | 'device' | 'creator_gear' | 'other';
   value: number;
   purchasePrice?: number;
   acquiredYear?: number;
+  deviceModelId?: string;
+  equipmentQuality?: number;
   propertyType?: 'primary' | 'rental' | 'land';
   annualRent?: number;
   annualMaintenanceCost?: number;
   investmentKind?: 'deposit' | 'balanced_fund';
   annualYieldRate?: number;
+}
+
+export type DigitalPlatformId = 'indotube' | 'tiklife' | 'instalife' | 'faceworld';
+export type DigitalContentCategory =
+  | 'gaming'
+  | 'vlog'
+  | 'education'
+  | 'comedy'
+  | 'music'
+  | 'culinary'
+  | 'travel'
+  | 'technology'
+  | 'beauty'
+  | 'sports'
+  | 'business'
+  | 'daily_life';
+export type DigitalContentPerformance = 'quiet' | 'normal' | 'popular' | 'trending' | 'viral';
+export type DigitalAppId = 'social' | 'creator' | 'market' | 'wallet';
+
+export interface MobileDataPlan {
+  packageId: string;
+  remainingMb: number;
+  expiresAtMonthIndex: number;
+}
+
+export interface SmartphoneRecord {
+  assetId: string;
+  modelId: string;
+  condition: number;
+  phoneNumber: string;
+  installedApps: DigitalAppId[];
+  dataPlan: MobileDataPlan | null;
+}
+
+export interface DigitalSocialAccount {
+  id: string;
+  platform: DigitalPlatformId;
+  username: string;
+  followers: number;
+  subscribers: number;
+  totalViews: number;
+  monetized: boolean;
+  createdYear: number;
+  createdMonth: number;
+}
+
+export interface DigitalContentRecord {
+  id: string;
+  accountId: string;
+  platform: DigitalPlatformId;
+  category: DigitalContentCategory;
+  title: string;
+  description: string;
+  year: number;
+  month: number;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  engagementRate: number;
+  newFollowers: number;
+  revenue: number;
+  performance: DigitalContentPerformance;
+}
+
+export interface DigitalTransaction {
+  id: string;
+  year: number;
+  month: number;
+  type: 'phone_purchase' | 'phone_sale' | 'data_package' | 'creator_gear' | 'content_production' | 'creator_income';
+  description: string;
+  amount: number;
+}
+
+export interface DigitalLifeRecord {
+  smartphone: SmartphoneRecord | null;
+  accounts: DigitalSocialAccount[];
+  content: DigitalContentRecord[];
+  transactions: DigitalTransaction[];
 }
 
 export type BusinessKind = 'food_stall' | 'grocery' | 'craft_shop';
@@ -345,6 +466,7 @@ export interface CourseGrade extends Course {
 export interface AcademicSemester {
   id: string;
   year: number;
+  month?: number;
   semester: number;
   courses: CourseGrade[];
   gpa: number;
@@ -567,10 +689,15 @@ export type CareerChange =
 
 export interface Character {
   id: string;
+  generation: number;
+  ancestors: AncestralRecord[];
+  estatePlan: EstatePlan;
+  estateSettlement: EstateSettlement | null;
   identity: CharacterIdentity;
   birthInformation: BirthInformation;
   birthEvent: BirthEvent;
   currentYear: number;
+  currentMonth: number;
   age: number;
   deathRecord: DeathRecord | null;
   lastYearIncome: number;
@@ -578,6 +705,7 @@ export interface Character {
   debt: number;
   assets: CharacterAsset[];
   economyRecord: EconomyRecord;
+  digitalLife: DigitalLifeRecord;
   relationships: SocialRelationship[];
   children: ChildRecord[];
   maritalStatus: MaritalStatus;
@@ -713,6 +841,9 @@ export interface LifeEvent {
   maxAge: number;
   minYear?: number;
   maxYear?: number;
+  calendarMonth?: number;
+  calendarMomentType?: 'national' | 'annual' | 'random';
+  cooldownMonths?: number;
   countryCode?: string;
   province?: string;
   city?: string;
@@ -768,6 +899,7 @@ export interface EventHistoryEntry {
   title: string;
   category: EventCategory | (string & {});
   year: number;
+  month?: number;
   age: number;
   choiceId: string;
   choiceLabel: string;
@@ -777,6 +909,8 @@ export interface EventHistoryEntry {
 export interface EventProgress {
   completedEventIds: string[];
   lastEventYears: Record<string, number>;
+  lastEventMonths?: Record<string, number>;
+  yearAdvanceRemaining?: number;
   history: EventHistoryEntry[];
   pendingEventIds: string[];
   pendingConsequences: ScheduledConsequence[];

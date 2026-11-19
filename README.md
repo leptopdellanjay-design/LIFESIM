@@ -5,15 +5,27 @@ Game simulasi kehidupan Indonesia 2D berbasis teks, ilustrasi orisinal, pilihan,
 ## Teknologi
 - React + TypeScript + Vite
 - Zustand untuk state gameplay
-- Dexie/IndexedDB untuk simpanan lokal satu slot
+- Dexie/IndexedDB untuk beberapa slot simpanan lokal dan backup JSON
 - Vitest untuk pengujian
-- Target Android melalui Capacitor pada fase berikutnya
+- Capacitor untuk aplikasi Android
 
 ## Menjalankan
+Persyaratan: Node.js 22 atau lebih baru.
+
 ```bash
 npm install
 npm run dev
 ```
+
+## Android
+Persyaratan: Android Studio, Android SDK 36, dan JDK 21.
+
+```bash
+npm run android:sync
+npm run android:open
+```
+
+Jalankan aplikasi pada emulator/perangkat dari Android Studio. Untuk menjalankan langsung pada perangkat yang terhubung, gunakan `npm run android:run`. APK debug dapat dibuat dengan `cd android && ./gradlew assembleDebug` (Windows: `cd android; .\gradlew.bat assembleDebug`).
 
 ## Pemeriksaan
 ```bash
@@ -25,34 +37,54 @@ npm run build
 - Workflow `.github/workflows/deploy.yml` menjalankan seluruh tes dan membuat build Vite untuk repository `LIFESIM` setiap ada push ke `main`.
 - Untuk deployment, buka **Settings → Pages → Build and deployment → Source**, lalu pilih **GitHub Actions**. Workflow mengunggah folder `dist` dan menerbitkan hasilnya ke GitHub Pages.
 - Build lokal biasa memakai root path. Mode `github-pages` membangun aset dengan base `/LIFESIM/`.
+- Workflow juga membangun APK Android debug untuk memverifikasi integrasi Capacitor.
 
 ## Fitur saat ini
 - Pembuatan karakter bertahap dengan validasi identitas, tanggal dan lokasi lahir, latar ekonomi, keluarga, serta kepribadian.
+- Orang tua yang masih hidup mendapat pekerjaan acak yang sesuai dengan tingkat ekonomi keluarga. Mereka mengirim dukungan bulanan selama karakter berusia di bawah 18 tahun; jumlahnya mengikuti pekerjaan, jumlah orang tua yang hidup, dan kondisi keluarga, lalu dicatat sebagai pemasukan.
 - Statistik awal, keluarga, dan aset diturunkan dari pilihan pemain; peristiwa kelahiran dicatat dan memengaruhi kebahagiaan awal.
-- Age Up menjalankan satu siklus tahunan: perkembangan statistik, tahap hidup, pendidikan, ekonomi pekerjaan, hubungan keluarga, event, kesehatan, dan risiko kematian.
-- Sembilan tahap kehidupan berubah otomatis berdasarkan usia; setiap tahun dan milestone tercatat dalam riwayat.
-- Katalog memuat 40+ event unik dalam 13 kategori, dengan syarat usia, tahun, lokasi, statistik, keluarga, ekonomi, hubungan, pekerjaan, hukum, dan organisasi.
+- Pemain dapat memajukan satu bulan atau menjalankan hingga satu tahun (maksimal 12 bulan). Simulasi setahun berhenti saat ada event yang perlu dipilih atau kehidupan berakhir; sisa bulan disimpan dan dapat dilanjutkan setelah pilihan event dibuat. Umur bertambah pada bulan ulang tahun; pendidikan, kesehatan, karier, pemasukan, pengeluaran, aset, risiko kematian, dan event berjalan menurut periode yang sesuai.
+- Kalender menandai Januari, perayaan 17 Agustus, dan akhir tahun; event acak dapat muncul sepanjang tahun dan harus dipilih sebelum waktu bergerak lagi.
+- Sembilan tahap kehidupan berubah otomatis berdasarkan usia; bulan, tahun, ulang tahun, dan milestone tercatat dalam riwayat.
+- Katalog memuat 50+ event unik dalam 13 kategori, dengan syarat usia, tahun, lokasi, statistik, keluarga, ekonomi, hubungan, pekerjaan, hukum, dan organisasi.
 - Event menggunakan peluang berbobot yang dapat diuji deterministik, cooldown, riwayat pilihan, pencegahan duplikasi, event lanjutan, dan konsekuensi tertunda.
 - Konsekuensi dapat mengubah statistik, uang, utang, aset, pendidikan, pekerjaan, keluarga, relasi sosial, status pernikahan, status hukum, dan keanggotaan organisasi.
-- Event fiksi diberi label; event sejarah faktual diberi klasifikasi dan sumber. Event organisasi bawah tanah merupakan narasi fiksi non-operasional.
+- Event fiksi diberi label; tujuh konteks sejarah faktual memiliki klasifikasi dan sumber institusional. Event organisasi bawah tanah merupakan narasi fiksi non-operasional.
 - Konteks teknologi mengikuti tahun permainan; smartphone tidak tersedia sebelum 2007. Tahun setelah 2026 diberi label masa depan fiksi.
-- Pendidikan memiliki katalog sekolah/program tinggi fiktif Indonesia, nilai semester dan IPK, biaya sesuai era, beasiswa, cuti, transfer, kelulusan, gelar, penghargaan akademik, dan riwayat.
-- Karier memiliki katalog profesi dan pemberi kerja fiktif, kualifikasi, lamaran/tawaran, gaji, pengalaman, promosi, PHK, dan pensiun; pendapatan tahunan masuk ke saldo serta kekayaan bersih.
+- Kehidupan digital menyediakan katalog ponsel dan peralatan kreator sesuai tahun rilis, pembelian/tukar tambah/jual perangkat, paket data bulanan, serta aplikasi Jaringan, Kamera & Studio, Pasar Digital, dan Dompet. Ponsel/peralatan menjadi aset yang menyusut nilainya melalui simulasi ekonomi.
+- Akun sosial fiktif dapat dibuat mulai usia 13 tahun. Unggahan memakai kuota data dan biaya produksi, menghasilkan tayangan/interaksi/audiens secara simulasi, mengurangi energi, dan konten populer dapat meningkatkan kebahagiaan, reputasi sosial, serta reputasi profesional.
+- Monetisasi kreator terbuka setelah memenuhi syarat audiens dan tayangan tiap platform. Semua biaya dan pemasukan digital menggunakan saldo utama karakter; tidak ada saldo bank/dompet terpisah atau transaksi jaringan nyata. Perangkat, paket, konten, dan transaksi tersimpan bersama riwayat permainan.
+- Pendidikan memiliki katalog sekolah dan program D1 hingga doktor fiktif Indonesia, termasuk magister dan doktor, nilai semester dan IPK, biaya, beasiswa, cuti, transfer, kelulusan, gelar, serta dampak studi pada kecerdasan, kesehatan, energi, dan kebahagiaan. Gelar yang diperoleh tampil pada nama karakter di dashboard.
+- Karier memiliki katalog profesi dan pemberi kerja fiktif, kualifikasi, lamaran/tawaran, gaji bulanan, pengalaman, promosi, PHK, dan pensiun; pemasukan dan pengeluaran diperbarui setiap bulan.
 - Event pendidikan dan karier memakai syarat record akademik/profesional yang sesungguhnya, termasuk peringatan akademik, evaluasi gaji, promosi, dan pengakuan akademik.
 - Hubungan sosial mendukung kenalan, interaksi, rekonsiliasi, pertemanan, tahap berpacaran, pertunangan, pernikahan, dan perceraian dengan dampak pada relasi, kebahagiaan, saldo, dan riwayat.
 - Sistem keluarga mencatat orang tua, saudara, wali, kakek/nenek yang belum diketahui, pasangan, serta anak dalam silsilah dan riwayat yang tersimpan.
-- Pemain yang telah menikah dapat memiliki atau mengadopsi anak, memilih pola asuh, berinteraksi dengan anak, dan menjalani perkembangan pendidikan, kesehatan, hubungan, serta biaya pengasuhan per tahun.
-- Kematian NPC diproses dengan risiko tahunan deterministik berdasarkan usia dan kesehatan; warisan orang tua hanya dibagikan jika nilai harta tercatat, dan status pasangan yang meninggal menjadi duda/janda.
-- Keuangan mendukung anggaran rumah tangga yang digunakan pada Age Up, deposito dan reksa dana simulasi, pinjaman berbunga dengan cicilan tahunan, serta riwayat transaksi.
-- Usaha kecil memiliki modal awal, omzet, biaya operasional, stabilitas, nilai aset, dan opsi tutup; hasil tahunan bergantung pada kondisi pasar simulasi.
-- Properti rumah, kontrakan, dan tanah dapat dibeli atau dijual. Kontrakan menghasilkan pendapatan sewa; seluruh properti mengalami biaya pemeliharaan dan perubahan nilai tahunan.
-- Simpanan lokal satu slot memakai versi 6 IndexedDB dan migrasi aditif dari versi 1–5; record hubungan, anak, dan ekonomi lama dilengkapi tanpa menghapus riwayat.
-- Age Up menulis hasil simulasi sebelum memperbarui state, mencegah klik ganda, dan mempertahankan state jika autosave gagal.
+- Pemain yang telah menikah dapat memiliki atau mengadopsi anak, memilih pola asuh, berinteraksi dengan anak, dan menjalani perkembangan pendidikan, kesehatan, hubungan, serta biaya pengasuhan.
+- Kematian NPC diproses berdasarkan usia dan kesehatan; karakter dewasa dapat mengatur pembagian estate simulasi, membayar utang dari harta, dan memilih penerus. Setelah karakter meninggal, pemain dapat melanjutkan sebagai anak dewasa yang dipilih; silsilah dan bagian waris tercatat lintas generasi.
+- Keuangan mendukung anggaran rumah tangga bulanan, deposito dan reksa dana simulasi, pinjaman berbunga dengan cicilan bulanan, serta riwayat transaksi. Anggaran kesehatan/makanan, pendidikan, dan rekreasi yang terbayar memengaruhi kesehatan, kecerdasan, dan kebahagiaan secara berkala.
+- Usaha kecil memiliki modal awal, omzet, biaya operasional, stabilitas, nilai aset, dan opsi tutup; hasil usaha diperbarui tiap bulan sesuai kondisi pasar simulasi.
+- Properti rumah, kontrakan, dan tanah dapat dibeli atau dijual. Kontrakan menghasilkan pendapatan sewa dan properti membebankan biaya pemeliharaan bulanan.
+- Simpanan lokal multi-slot memakai skema IndexedDB versi 11; migrasi aditif mempertahankan slot lama, tanggal bulanan, silsilah, estate, pekerjaan orang tua, dan catatan permainan, serta menginisialisasi sistem digital untuk save lama. Backup JSON tetap memakai format versi 6 dan menerima save lama tanpa data digital.
+- Pengaturan memungkinkan beralih cerita, memulai cerita baru tanpa mengganti slot lama, mengunduh backup JSON, dan memulihkan backup ke slot yang dipilih. File yang dipulihkan divalidasi dan dibatasi 10 MB.
+- Cloud-save belum dikonfigurasi; tetap opsional agar permainan offline tersedia tanpa akun atau kredensial layanan.
+- Giliran bulanan ditulis ke simpanan sebelum memperbarui state, mencegah klik ganda, dan mempertahankan state jika autosave gagal.
 - Profil karakter dapat diedit tanpa mengatur ulang kemajuan hidup.
-- Dashboard menampilkan tahap usia, event aktif, loading/error state, dan ringkasan kematian.
+- Dashboard menampilkan kalender bulan berjalan, tahap usia, event aktif, gelar akademik, loading/error state, dan ringkasan kematian; navigasi utama disembunyikan di menu sandwich.
+- Daftar hubungan menyembunyikan hubungan yang berakhir dan menempatkan pasangan yang masih menjadi suami/istri di urutan teratas.
 - Pendidikan, karier, hubungan keluarga, keuangan simulasi, dan riwayat terhubung ke satu Zustand store.
 
-Nilai ekonomi, hasil investasi, dan risiko kematian adalah aturan fiksi simulasi, bukan data historis, penawaran kredit, atau prediksi faktual. Pilihan lokasi yang tersedia saat ini adalah Indonesia; konfigurasi pendidikan dan karier negara lain belum tersedia. Nama kerabat yang tidak diketahui tetap ditandai sebagai tidak diketahui, bukan dianggap fakta silsilah. Generasi turunan yang dapat dimainkan, cucu, pembagian warisan kompleks, dan sistem hukum rinci masih dalam pengembangan. Tidak ada simulasi sejarah faktual personal di luar konteks event yang secara eksplisit bersumber.
+Nilai ekonomi, pembagian estate, hasil investasi, dan risiko kematian adalah aturan fiksi simulasi, bukan data historis, nasihat hukum/keuangan, atau prediksi faktual. Pilihan lokasi yang tersedia saat ini adalah Indonesia dengan 38 provinsi; konfigurasi pendidikan dan karier negara lain belum tersedia. Nama kerabat yang tidak diketahui tetap ditandai sebagai tidak diketahui, bukan dianggap fakta silsilah. Penerus baru dapat dimainkan setelah berusia 18 tahun; bila tidak ada anak dewasa, kehidupan berakhir dan pemain dapat memulai slot baru. Sistem estate hanya simulasi permainan dan tidak menafsirkan hukum waris nyata.
+
+## Status roadmap
+1-8. Fondasi, dashboard, karakter, simulasi bulanan, event, pendidikan/karier, relasi/keluarga, ekonomi/properti — selesai.
+9. Sejarah dan wilayah Indonesia — selesai untuk cakupan saat ini: 38 provinsi, kota pilihan, dan konteks sejarah bersumber yang terpisah dari fiksi.
+10. Mafia dan dunia bawah — selesai sebagai narasi fiksi abstrak/non-operasional.
+11. Kematian, warisan, generasi — selesai untuk risiko kematian, rencana dan pembagian estate simulasi, pewaris dewasa, serta pergantian karakter lintas generasi.
+12. Simpanan lokal dan cloud opsional — multi-slot, backup/restore, dan migrasi lokal selesai; cloud tetap opsional dan belum diaktifkan tanpa konfigurasi layanan.
+13. Build Web dan Android — selesai; GitHub Actions membangun situs dan APK Android debug.
+14–18. Smartphone, aplikasi digital, media sosial, kreator, monetisasi, dan marketplace awal — slice permainan fungsional tersedia; progres kreator ikut memengaruhi reputasi profesional dan seluruh arus kas memakai saldo utama.
+19–20. Karier digital lanjutan, event khusus digital, serta sistem perusahaan/platform — belum selesai.
+21–30. Ekspansi lanjutan pada cakupan lampiran (termasuk fitur perjalanan, perusahaan, kendaraan, achievement, dan optimasi) — belum selesai; perlu diaudit dan dikerjakan bertahap.
 
 ## Prinsip
 - Bukan game 3D/open-world.

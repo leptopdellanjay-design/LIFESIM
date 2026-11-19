@@ -16,8 +16,10 @@ import type {
 } from '../types/game';
 import { createInitialCareerRecord } from './careerEngine';
 import { createInitialEducationRecord } from './educationEngine';
+import { randomParentOccupationId } from './familySupport';
 import { getNominalPriceFactor } from './worldEra';
 import { createInitialEconomyRecord } from './economyEngine';
+import { createInitialDigitalLifeRecord } from './digitalLifeEngine';
 
 export type DraftField = keyof CharacterDraft;
 export type DraftErrors = Partial<Record<DraftField, string>>;
@@ -117,8 +119,10 @@ function createFamily(
   condition: ParentCondition,
   siblingCount: number,
   backgroundLabel: string,
+  backgroundTier: FamilyBackgroundTier,
   birthYear: number,
   parentEstateCash: number,
+  random: () => number,
 ): Family {
   const parentStatus: Record<ParentCondition, { father: FamilyMemberStatus; mother: FamilyMemberStatus }> = {
     both_alive: { father: 'alive', mother: 'alive' },
@@ -141,6 +145,9 @@ function createFamily(
       gender: 'male',
       health: 75,
       estateCash: parentEstateCash,
+      occupationId: statuses.father === 'alive'
+        ? randomParentOccupationId(backgroundTier, random)
+        : null,
       generation: -1,
       history: [],
     },
@@ -156,6 +163,9 @@ function createFamily(
       gender: 'female',
       health: 78,
       estateCash: parentEstateCash,
+      occupationId: statuses.mother === 'alive'
+        ? randomParentOccupationId(backgroundTier, random)
+        : null,
       generation: -1,
       history: [],
     },
@@ -273,6 +283,12 @@ export class CharacterDraftError extends Error {
 export interface CreateCharacterOptions {
   today?: Date;
   idFactory?: () => string;
+  random?: () => number;
+}
+
+export function createCharacterId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `character-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function createCharacter(
@@ -291,16 +307,17 @@ export function createCharacter(
   const nominalFactor = getNominalPriceFactor(birthYear);
   const cash = Math.max(1, Math.round(background.cashBase * nominalFactor));
   const nonCashValue = Math.round(background.nonCashBase * nominalFactor);
+  const random = options.random ?? Math.random;
   const family = createFamily(
     draft.parentCondition as ParentCondition,
     draft.siblingCount,
     background.label,
+    draft.familyBackground as FamilyBackgroundTier,
     birthYear,
     Math.round(cash * 0.1),
+    random,
   );
-  const id = options.idFactory?.()
-    ?? globalThis.crypto?.randomUUID?.()
-    ?? `character-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const id = options.idFactory?.() ?? createCharacterId();
   const birthEvent: BirthEvent = {
     id: 'birth-recorded',
     title: 'Hari kelahiran',
@@ -315,6 +332,14 @@ export function createCharacter(
 
   return {
     id,
+    generation: 0,
+    ancestors: [],
+    estatePlan: {
+      distribution: 'equal_heirs',
+      namedHeirId: null,
+      updatedYear: birthYear,
+    },
+    estateSettlement: null,
     identity: {
       firstName: draft.firstName.trim(),
       lastName: draft.lastName.trim(),
@@ -332,6 +357,7 @@ export function createCharacter(
     },
     birthEvent,
     currentYear: birthYear,
+    currentMonth: Number(draft.birthDate.slice(5, 7)),
     age: 0,
     deathRecord: null,
     lastYearIncome: 0,
@@ -339,6 +365,7 @@ export function createCharacter(
     debt: 0,
     assets: [],
     economyRecord: createInitialEconomyRecord(),
+    digitalLife: createInitialDigitalLifeRecord(),
     relationships: [],
     children: [],
     maritalStatus: 'single',

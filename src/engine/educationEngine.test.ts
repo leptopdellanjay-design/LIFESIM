@@ -5,6 +5,7 @@ import {
   applyForScholarship,
   enrollInProgram,
   getEligiblePrograms,
+  simulateEducationMonth,
   simulateEducationYear,
 } from './educationEngine';
 
@@ -52,6 +53,53 @@ describe('education engine', () => {
     expect(getEligiblePrograms(graduateFromHighSchool()).some((program) => program.level === 's1')).toBe(true);
   });
 
+  it('unlocks master and doctoral study after the required prior degrees', () => {
+    const graduate = graduateFromHighSchool();
+    const bachelorDegree = {
+      id: 'degree:s1-informatika:universitas-nusantara-maju',
+      level: 's1' as const,
+      title: 'Sarjana Komputer',
+      abbreviation: 'S.Kom.',
+      programId: 's1-informatika',
+      institutionId: 'universitas-nusantara-maju',
+      year: 2018,
+      gpa: 3.4,
+    };
+    const withBachelor = {
+      ...graduate,
+      educationRecord: {
+        ...graduate.educationRecord,
+        currentLevel: 's1' as const,
+        status: 'completed' as const,
+        completedLevels: [...graduate.educationRecord.completedLevels, 's1' as const],
+        degrees: [bachelorDegree],
+        cumulativeGpa: 3.4,
+      },
+    };
+    expect(getEligiblePrograms(withBachelor).some((program) => program.level === 's2')).toBe(true);
+
+    const withMaster = {
+      ...withBachelor,
+      educationRecord: {
+        ...withBachelor.educationRecord,
+        currentLevel: 's2' as const,
+        completedLevels: [...withBachelor.educationRecord.completedLevels, 's2' as const],
+        degrees: [
+          bachelorDegree,
+          {
+            ...bachelorDegree,
+            id: 'degree:s2-manajemen:universitas-nusantara-maju',
+            level: 's2' as const,
+            title: 'Magister Manajemen',
+            abbreviation: 'M.M.',
+            programId: 's2-manajemen',
+          },
+        ],
+      },
+    };
+    expect(getEligiblePrograms(withMaster).some((program) => program.level === 's3')).toBe(true);
+  });
+
   it('enrolls in a compatible fictional university and advances grades and credits by semester', () => {
     const character = graduateFromHighSchool();
     const enrolled = enrollInProgram(character, 'd1-akuntansi', 'universitas-nusantara-maju');
@@ -81,6 +129,25 @@ describe('education engine', () => {
     expect(year.character.educationRecord.status).toBe('on_leave');
     expect(year.character.educationRecord.history.some((entry) => entry.text.includes('dana semester'))).toBe(true);
     expect(year.character.educationRecord.semesters).toHaveLength(0);
+  });
+
+  it('processes one semester on its calendar month and connects study to character stats', () => {
+    const enrolled = enrollInProgram(
+      { ...graduateFromHighSchool(), currentMonth: 5 },
+      'd1-akuntansi',
+      'universitas-nusantara-maju',
+    )!;
+    const nextMonth = { ...enrolled.character, currentMonth: 6 };
+    const result = simulateEducationMonth(nextMonth, 6, false, () => 0.99);
+    const skippedMonth = simulateEducationMonth(result.character, 7, false, () => 0.99);
+
+    expect(result.character.educationRecord.semester).toBe(1);
+    expect(result.character.educationRecord.semesters[0].month).toBe(6);
+    expect(result.character.cash).toBeLessThan(nextMonth.cash);
+    expect(result.character.lastYearExpenses).toBeGreaterThan(nextMonth.lastYearExpenses);
+    expect(result.character.stats.intelligence).toBeGreaterThan(nextMonth.stats.intelligence);
+    expect(result.character.stats.energy).toBeLessThan(nextMonth.stats.energy);
+    expect(skippedMonth.character.educationRecord.semester).toBe(1);
   });
 
   it('reviews a scholarship during annual study and applies its tuition support once', () => {

@@ -489,11 +489,17 @@ export function closeBusiness(
   };
 }
 
-export function processEconomyYear(
+function processEconomyPeriod(
   source: Character,
   random: () => number = Math.random,
+  periodMonths = 12,
+  month = 12,
 ): EconomyYearResult {
   const character = normalizeEconomyRecord(source);
+  const periodFraction = periodMonths / 12;
+  const periodLabel = periodMonths === 12
+    ? `${character.currentYear}`
+    : `${character.currentYear}-${String(month).padStart(2, '0')}`;
   const record = character.economyRecord;
   const assets = character.assets.map((asset) => ({ ...asset }));
   const businesses = record.businesses.map((business) => ({ ...business, history: [...business.history] }));
@@ -507,25 +513,33 @@ export function processEconomyYear(
       const inflation = asset.acquiredYear
         ? getNominalPriceFactor(character.currentYear) / getNominalPriceFactor(asset.acquiredYear)
         : 1;
-      const rent = finiteNonNegative(Math.round((asset.annualRent ?? 0) * inflation));
-      const maintenance = finiteNonNegative(Math.round((asset.annualMaintenanceCost ?? 0) * inflation));
+      const rent = finiteNonNegative(Math.round((asset.annualRent ?? 0) * inflation * periodFraction));
+      const maintenance = finiteNonNegative(Math.round((asset.annualMaintenanceCost ?? 0) * inflation * periodFraction));
       income += rent;
       expenses += maintenance;
-      if (rent > 0) historyEntries.push(`${character.currentYear}: Properti ${asset.name} menghasilkan sewa ${rent}.`);
-      if (maintenance > 0) historyEntries.push(`${character.currentYear}: Perawatan ${asset.name} menelan biaya ${maintenance}.`);
+      if (rent > 0) historyEntries.push(`${periodLabel}: Properti ${asset.name} menghasilkan sewa ${rent}.`);
+      if (maintenance > 0) historyEntries.push(`${periodLabel}: Perawatan ${asset.name} menelan biaya ${maintenance}.`);
       const appreciation = asset.propertyType === 'land' ? 0.035 : 0.025;
-      asset.value = finiteNonNegative(Math.round(asset.value * (1 + appreciation)));
+      asset.value = finiteNonNegative(Math.round(asset.value * ((1 + appreciation) ** periodFraction)));
     }
     if (asset.category === 'investment') {
       const yieldRate = asset.annualYieldRate ?? 0;
       const rawRoll = random();
       const roll = Number.isFinite(rawRoll) ? clamp(rawRoll * 10000, 0, 9999) / 10000 : 0.5;
+      const expectedRate = (1 + yieldRate) ** periodFraction - 1;
+      const volatility = 0.18 * Math.sqrt(periodFraction);
       const rate = asset.investmentKind === 'balanced_fund'
-        ? clamp(Math.round((yieldRate + (roll - 0.5) * 0.18) * 10000), -3000, 2000) / 10000
-        : yieldRate;
+        ? clamp(Math.round((expectedRate + (roll - 0.5) * volatility) * 10000), -3000, 2000) / 10000
+        : expectedRate;
       const change = Math.round(asset.value * rate);
       asset.value = finiteNonNegative(asset.value + change);
-      historyEntries.push(`${character.currentYear}: Nilai ${asset.name} ${change >= 0 ? 'bertambah' : 'berkurang'} ${Math.abs(change)}.`);
+      historyEntries.push(`${periodLabel}: Nilai ${asset.name} ${change >= 0 ? 'bertambah' : 'berkurang'} ${Math.abs(change)}.`);
+    }
+    if (asset.category === 'device' || asset.category === 'creator_gear') {
+      const annualDepreciation = asset.category === 'device' ? 0.18 : 0.1;
+      asset.value = finiteNonNegative(Math.round(
+        asset.value * ((1 - annualDepreciation) ** periodFraction),
+      ));
     }
   }
 
@@ -536,39 +550,42 @@ export function processEconomyYear(
     const marketFactor = 0.8 + roll * 0.4;
     const inflation = getNominalPriceFactor(character.currentYear)
       / getNominalPriceFactor(business.startedYear);
-    const revenue = finiteNonNegative(Math.round(business.annualRevenue * inflation * marketFactor));
-    const operatingCosts = finiteNonNegative(Math.round(business.annualOperatingCosts * inflation));
+    const revenue = finiteNonNegative(Math.round(business.annualRevenue * inflation * marketFactor * periodFraction));
+    const operatingCosts = finiteNonNegative(Math.round(business.annualOperatingCosts * inflation * periodFraction));
     const profit = revenue - operatingCosts;
     income += revenue;
     expenses += operatingCosts;
-    business.stability = clamp(business.stability + (profit >= 0 ? 1 : -2), 0, 100);
-    business.history.push(`${character.currentYear}: Pemasukan ${revenue}, biaya operasional ${operatingCosts}, hasil bersih ${profit}.`);
+    if (periodMonths === 12 || month === 12) {
+      business.stability = clamp(business.stability + (profit >= 0 ? 1 : -2), 0, 100);
+    }
+    business.history.push(`${periodLabel}: Pemasukan ${revenue}, biaya operasional ${operatingCosts}, hasil bersih ${profit}.`);
     const businessAsset = assets.find((asset) => asset.id === business.assetId);
     if (businessAsset) {
       businessAsset.value = finiteNonNegative(Math.round(businessAsset.value * 0.97));
     }
-    historyEntries.push(`${character.currentYear}: ${business.name} mencatat hasil bersih ${profit}.`);
+    historyEntries.push(`${periodLabel}: ${business.name} mencatat hasil bersih ${profit}.`);
   }
 
   let debt = character.debt;
   let availableForLoanPayments = Math.max(0, character.cash + income - expenses);
   for (const loan of loans) {
     if (loan.status !== 'active') continue;
-    const interest = Math.ceil(loan.balance * loan.annualInterestRate);
-    const due = Math.min(loan.balance + interest, loan.annualPayment);
+    const interestRate = (1 + loan.annualInterestRate) ** periodFraction - 1;
+    const interest = Math.ceil(loan.balance * interestRate);
+    const due = Math.min(loan.balance + interest, Math.ceil(loan.annualPayment * periodFraction));
     const payment = Math.min(due, availableForLoanPayments);
     availableForLoanPayments -= payment;
     loan.balance = Math.max(0, loan.balance + interest - payment);
     debt = Math.max(0, debt + interest - payment);
     expenses += payment;
     if (payment > 0) {
-      loan.history.push(`${character.currentYear}: Pembayaran tahunan ${payment}; bunga ${interest}; sisa ${loan.balance}.`);
+      loan.history.push(`${periodLabel}: Pembayaran ${payment}; bunga ${interest}; sisa ${loan.balance}.`);
     }
     if (loan.balance === 0) {
       loan.status = 'paid';
-      historyEntries.push(`${character.currentYear}: Pinjaman ${loan.name} lunas.`);
+      historyEntries.push(`${periodLabel}: Pinjaman ${loan.name} lunas.`);
     } else {
-      historyEntries.push(`${character.currentYear}: Pembayaran pinjaman ${loan.name} sebesar ${payment}; bunga ${interest}.`);
+      historyEntries.push(`${periodLabel}: Pembayaran pinjaman ${loan.name} sebesar ${payment}; bunga ${interest}.`);
     }
   }
 
@@ -591,4 +608,19 @@ export function processEconomyYear(
     expenses,
     historyEntries,
   };
+}
+
+export function processEconomyYear(
+  character: Character,
+  random: () => number = Math.random,
+): EconomyYearResult {
+  return processEconomyPeriod(character, random);
+}
+
+export function processEconomyMonth(
+  character: Character,
+  month: number,
+  random: () => number = Math.random,
+): EconomyYearResult {
+  return processEconomyPeriod(character, random, 1, month);
 }

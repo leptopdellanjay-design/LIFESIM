@@ -26,6 +26,8 @@ export interface EducationActionResult {
   historyText: string;
 }
 
+const clampStat = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
 const levelRanks: Record<EducationLevel, number> = {
   none: 0,
   paud: 1,
@@ -480,6 +482,7 @@ function applyTertiarySemester(
   const semester: AcademicSemester = {
     id: `${program.id}:${character.currentYear}:${termNumber}`,
     year: character.currentYear,
+    month: character.currentMonth,
     semester: termNumber,
     courses: courseGrades,
     gpa: semesterGpa,
@@ -504,6 +507,15 @@ function applyTertiarySemester(
     ...character,
     cash: Math.max(0, character.cash + scholarshipMoney - tuition),
     netWorth: Math.max(0, character.netWorth + scholarshipMoney - tuition),
+    lastYearIncome: Math.max(0, character.lastYearIncome + scholarshipMoney),
+    lastYearExpenses: Math.max(0, character.lastYearExpenses + tuition),
+    stats: {
+      ...character.stats,
+      intelligence: clampStat(character.stats.intelligence + (semesterGpa >= minimumGpa ? 1 : 0)),
+      health: clampStat(character.stats.health - (character.educationRecord.studyEffort === 'focused' ? 1 : 0)),
+      energy: clampStat(character.stats.energy - (character.educationRecord.studyEffort === 'focused' ? 2 : 1)),
+      happiness: clampStat(character.stats.happiness + (semesterGpa >= 3 ? 1 : semesterGpa < minimumGpa ? -2 : 0)),
+    },
     educationRecord: nextRecord,
   };
 
@@ -616,39 +628,55 @@ function progressSchoolYear(character: Character): {
   return { character: { ...character, educationRecord: record }, historyEntries };
 }
 
-export function simulateEducationYear(
+export function simulateEducationSemester(
   character: Character,
   random: () => number = Math.random,
 ): { character: Character; historyEntries: string[] } {
   const record = character.educationRecord;
-  if (record.status === 'enrolled' && record.programId) {
-    const program = studyPrograms.find((item) => item.id === record.programId);
-    if (!program) return { character, historyEntries: [] };
+  if (record.status !== 'enrolled' || !record.programId) return { character, historyEntries: [] };
+  const program = studyPrograms.find((item) => item.id === record.programId);
+  if (!program) return { character, historyEntries: [] };
+  const updatedRecord = evaluateScholarships(character, record, program);
+  const result = applyTertiarySemester(character, updatedRecord, program, random);
+  const historyEntries = result.record.semesters.length > record.semesters.length
+    ? [`${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: Semester ${result.record.semester} selesai dengan IP ${result.record.semesters[result.record.semesters.length - 1].gpa.toFixed(2)}.`]
+    : [];
+  if (result.completed) {
+    historyEntries.push(`${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: Lulus ${program.name} dan memperoleh gelar ${program.degreeAbbreviation}.`);
+  }
+  return {
+    character: { ...result.character, educationRecord: result.record },
+    historyEntries,
+  };
+}
+
+export function simulateEducationMonth(
+  character: Character,
+  month: number,
+  isBirthday: boolean,
+  random: () => number = Math.random,
+): { character: Character; historyEntries: string[] } {
+  if (character.educationRecord.programId
+    && character.educationRecord.status === 'enrolled') {
+    return month === 6 || month === 12
+      ? simulateEducationSemester(character, random)
+      : { character, historyEntries: [] };
+  }
+  return isBirthday ? progressSchoolYear(character) : { character, historyEntries: [] };
+}
+
+export function simulateEducationYear(
+  character: Character,
+  random: () => number = Math.random,
+): { character: Character; historyEntries: string[] } {
+  if (character.educationRecord.status === 'enrolled' && character.educationRecord.programId) {
     let updatedCharacter = character;
-    let updatedRecord = evaluateScholarships(character, record, program);
     const historyEntries: string[] = [];
-    for (let term = 0; term < 2 && updatedRecord.status === 'enrolled'; term += 1) {
-      const result = applyTertiarySemester(
-        updatedCharacter,
-        updatedRecord,
-        program,
-        random,
-      );
+    for (let term = 0; term < 2 && updatedCharacter.educationRecord.status === 'enrolled'; term += 1) {
+      const result = simulateEducationSemester(updatedCharacter, random);
       updatedCharacter = result.character;
-      updatedRecord = result.record;
-      if (result.record.semesters.length > record.semesters.length + term) {
-        const latest = result.record.semesters[result.record.semesters.length - 1];
-        historyEntries.push(
-          `${character.currentYear}: Semester ${latest.semester} selesai dengan IP ${latest.gpa.toFixed(2)}.`,
-        );
-      }
-      if (result.completed) {
-        historyEntries.push(`${character.currentYear}: Lulus ${program.name} dan memperoleh gelar ${program.degreeAbbreviation}.`);
-        break;
-      }
-      if (result.record.status !== 'enrolled') break;
+      historyEntries.push(...result.historyEntries);
     }
-    updatedCharacter = { ...updatedCharacter, educationRecord: updatedRecord };
     return { character: updatedCharacter, historyEntries };
   }
   return progressSchoolYear(character);
