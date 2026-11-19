@@ -47,6 +47,7 @@ function isEligible(
   const { age, currentYear, currentMonth, birthInformation, stats, family } = character;
   const location = birthInformation.location;
   const educationRecord = character.educationRecord;
+  const digitalAccounts = character.digitalLife?.accounts ?? [];
   if (age < event.minAge || age > event.maxAge) return false;
   if (event.minYear !== undefined && currentYear < event.minYear) return false;
   if (event.maxYear !== undefined && currentYear > event.maxYear) return false;
@@ -83,6 +84,14 @@ function isEligible(
       && career.positionIndex > event.careerRequirements.maxPositionIndex) return false;
     if (event.careerRequirements.requiresAvailablePromotion && !canReceivePromotion(character)) return false;
   }
+  if (event.requiredDigitalPlatform
+    && !digitalAccounts.some((account) => account.platform === event.requiredDigitalPlatform)) return false;
+  if (event.requiresMonetizedDigitalAccount
+    && !digitalAccounts.some((account) => account.monetized
+      && (!event.requiredDigitalPlatform || account.platform === event.requiredDigitalPlatform))) return false;
+  if (event.minDigitalAudience !== undefined
+    && digitalAccounts.reduce((total, account) => total + account.followers + account.subscribers, 0)
+      < event.minDigitalAudience) return false;
   if (event.minCash !== undefined && character.cash < event.minCash) return false;
   if (event.maxCash !== undefined && character.cash > event.maxCash) return false;
   if (event.minDebt !== undefined && character.debt < event.minDebt) return false;
@@ -236,6 +245,19 @@ export function getChoiceUnavailableReason(
   if (requirements?.requiredOrganizationIds?.some(
     (id) => !character.organizations.some((member) => member.id === id && member.status === 'active'),
   )) return 'Keanggotaan organisasi belum memenuhi syarat pilihan ini.';
+  const digitalAccounts = character.digitalLife?.accounts ?? [];
+  if (requirements?.requiredDigitalPlatform
+    && !digitalAccounts.some((account) => account.platform === requirements.requiredDigitalPlatform)) {
+    return 'Akun platform digital yang dibutuhkan belum tersedia.';
+  }
+  if (requirements?.requiresMonetizedDigitalAccount
+    && !digitalAccounts.some((account) => account.monetized
+      && (!requirements.requiredDigitalPlatform || account.platform === requirements.requiredDigitalPlatform))) {
+    return 'Pilihan ini membutuhkan akun digital yang sudah dimonetisasi.';
+  }
+  if (requirements?.minDigitalAudience !== undefined
+    && digitalAccounts.reduce((total, account) => total + account.followers + account.subscribers, 0)
+      < requirements.minDigitalAudience) return 'Jumlah audiens digital belum memenuhi syarat pilihan ini.';
   return null;
 }
 

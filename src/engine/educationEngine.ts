@@ -82,6 +82,23 @@ export function createInitialEducationRecord(): EducationRecord {
   };
 }
 
+export function createHighSchoolGraduateRecord(currentYear: number): EducationRecord {
+  const record = createInitialEducationRecord();
+  const completedLevels: EducationLevel[] = ['paud', 'tk', 'sd', 'smp', 'sma'];
+  return {
+    ...record,
+    currentLevel: 'sma',
+    status: 'completed',
+    completedLevels,
+    stageYearsCompleted: 3,
+    history: [{
+      id: `${currentYear}:high-school-graduation`,
+      year: currentYear,
+      text: 'Lulus Sekolah Menengah Atas dan memulai perjalanan dewasa.',
+    }],
+  };
+}
+
 export function createEducationRecordFromLegacy(
   legacyValue?: string,
   currentYear = 2026,
@@ -168,6 +185,10 @@ export function enrollInProgram(
   const program = studyPrograms.find((item) => item.id === programId);
   const university = universities.find((item) => item.id === universityId);
   if (!program || !university
+    || (program.level === 's1'
+      && character.postGraduationPath
+      && character.postGraduationPath !== 'not_applicable'
+      && character.admissionRecord?.status !== 'admitted')
     || !getEligiblePrograms(character).some((item) => item.id === programId)
     || !getEligibleUniversities(programId).some((item) => item.id === universityId)) return null;
 

@@ -44,6 +44,12 @@ const newCharacter = () => createCharacter(draft, {
   idFactory: () => 'store-character',
 });
 
+const newGraduate = () => createCharacter(draft, {
+  today: new Date('2026-11-18T12:00:00'),
+  startAge: 18,
+  idFactory: () => 'store-graduate',
+});
+
 function persistedGame(character = newCharacter()): PersistedGame {
   return {
     id: 'active',
@@ -87,6 +93,19 @@ describe('game progression and persistence', () => {
     ]);
     expect(createActiveGameIfAbsent).toHaveBeenCalledOnce();
     expect(useGameStore.getState().persistenceStatus).toBe('saved');
+  });
+
+  it('requires a post-graduation path before advancing a new adult character', async () => {
+    await useGameStore.getState().hydrate();
+    await useGameStore.getState().startLife(newGraduate());
+
+    expect(await useGameStore.getState().advanceMonth()).toBe(false);
+    expect(await useGameStore.getState().advanceYear()).toBe(false);
+    expect(saveActiveGame).not.toHaveBeenCalled();
+
+    expect(await useGameStore.getState().choosePostGraduationPath('gap_year')).toBe(true);
+    expect(useGameStore.getState().character?.postGraduationPath).toBe('gap_year');
+    expect(saveActiveGame).toHaveBeenCalledOnce();
   });
 
   it('loads a previously saved life without replacing it', async () => {

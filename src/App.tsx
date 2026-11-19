@@ -36,6 +36,7 @@ import type {
   FamilyMember,
   FamilyMemberRole,
   LifeEvent,
+  PostGraduationPath,
   RomanticRelationshipStage,
   StudyEffort,
 } from './types/game';
@@ -74,6 +75,8 @@ import { getEducationLevelLabel, studyPrograms, universities } from './data/educ
 import { careerCategoryLabels, getEmployer, getOccupation, getOccupationTitle } from './data/careerCatalog';
 import { exportGameBackup, type SaveSlotSummary } from './persistence/gameSave';
 import { getEligibleSuccessors } from './engine/successionEngine';
+import { getLifespanEstimate } from './engine/simulationEngine';
+import { createInitialAdmissionRecord, type AdmissionPreparationActivity } from './engine/admissionEngine';
 import {
   canMonetizeAccount,
   getDigitalProductionCost,
@@ -83,6 +86,7 @@ import {
   creatorEquipment,
   dataPackages,
   digitalApps,
+  digitalBanks,
   digitalContentCategories,
   digitalPlatforms,
   getDigitalPlatform,
@@ -312,6 +316,12 @@ function Dashboard({
   isBusy,
   onEditCharacter,
   onContinueAsHeir,
+  onChoosePostGraduationPath,
+  onBeginCollegeAdmission,
+  onSelectAdmissionProgram,
+  onPrepareForAdmission,
+  onTakeAdmissionTest,
+  onOpenPage,
 }: {
   character: Character;
   history: string[];
@@ -325,14 +335,27 @@ function Dashboard({
   isBusy: boolean;
   onEditCharacter: () => void;
   onContinueAsHeir: (childId: string) => Promise<boolean>;
+  onChoosePostGraduationPath: (
+    path: Exclude<PostGraduationPath, 'undecided' | 'not_applicable'>,
+  ) => Promise<boolean>;
+  onBeginCollegeAdmission: () => Promise<boolean>;
+  onSelectAdmissionProgram: (universityId: string, programId: string) => Promise<boolean>;
+  onPrepareForAdmission: (activity: AdmissionPreparationActivity) => Promise<boolean>;
+  onTakeAdmissionTest: () => Promise<boolean>;
+  onOpenPage: (page: PageId) => void;
 }) {
-  const canAdvance = character.status === 'alive' && activeEvent === null && !isBusy;
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const canAdvance = character.status === 'alive'
+    && activeEvent === null
+    && !isBusy
+    && character.postGraduationPath !== 'undecided';
   const currencyCode = character.birthInformation.location.currencyCode;
   const background = getFamilyBackground(character.familyBackground.tier);
   const worldContext = getWorldYearContext(character.currentYear);
   const lifeStage = getLifeStage(character.age);
   const eligibleSuccessors = getEligibleSuccessors(character);
   const monthlyParentalSupport = getMonthlyParentalSupport(character);
+  const lifespanEstimate = getLifespanEstimate(character);
   const livingFamilySummary = character.family.members
     .filter((member) => member.status === 'alive')
     .map((member) => {
@@ -364,7 +387,10 @@ function Dashboard({
             <h2 id="profile-name">{getDashboardCharacterName(character)}</h2>
             <button type="button" className="edit-profile-button" onClick={onEditCharacter}><Pencil size={14} aria-hidden="true" /> Edit</button>
           </div>
-          <p className="profile-subtitle">{lifeStage.label} · {character.age} tahun <span>·</span> {genderLabels[character.identity.gender]}</p>
+          <p className="profile-subtitle">
+            <span className="desktop-profile-summary">{lifeStage.label} · {character.age} tahun <span>·</span> {genderLabels[character.identity.gender]}</span>
+            <span className="mobile-profile-summary">Usia {character.age} · {getOccupationTitle(character.careerRecord.currentOccupationId, character.careerRecord.positionIndex)} · {character.birthInformation.location.city}, {character.birthInformation.location.province}</span>
+          </p>
           <div className="profile-facts">
             <div><MapPin size={16} aria-hidden="true" /><span>{character.birthInformation.location.city}, {character.birthInformation.location.province}<small>Kota asal</small></span></div>
             <div><GraduationCap size={16} aria-hidden="true" /><span>{getEducationDisplayLabel(character.educationRecord)}<small>Pendidikan</small></span></div>
@@ -378,8 +404,30 @@ function Dashboard({
         </div>
       </section>
 
+      <PostGraduationPanel
+        character={character}
+        isBusy={isBusy}
+        onChoosePath={onChoosePostGraduationPath}
+        onBeginCollegeAdmission={onBeginCollegeAdmission}
+        onSelectProgram={onSelectAdmissionProgram}
+        onPrepare={onPrepareForAdmission}
+        onTakeTest={onTakeAdmissionTest}
+        onOpenPage={onOpenPage}
+      />
+
       <div className="dashboard-grid">
         <CharacterStats character={character} />
+        {lifespanEstimate && (
+          <section className="panel" aria-labelledby="lifespan-title">
+            <div className="panel-heading">
+              <div><span className="eyebrow">LIFESPAN SIMULASI</span><h2 id="lifespan-title">Perkiraan harapan hidup</h2></div>
+            </div>
+            <strong className="balance">Rentang 10–90%: usia {lifespanEstimate.likelyAgeRange[0]}–{lifespanEstimate.likelyAgeRange[1]}</strong>
+            <p className="footnote">Rata-rata model sekitar {lifespanEstimate.expectedAge} tahun. Ini perkiraan probabilitas, bukan tanggal kematian pasti.</p>
+            <p className="footnote">Risiko tahunan saat ini: {(lifespanEstimate.currentAnnualRisk * 100).toFixed(2)}%.</p>
+            {lifespanEstimate.factors.map((factor) => <p className="footnote" key={factor}>{factor}</p>)}
+          </section>
+        )}
         <FinancialOverview character={character} />
         <CalendarPanel month={character.currentMonth} year={character.currentYear} />
         <section className="panel era-panel" aria-label="Kondisi era permainan">
@@ -506,11 +554,62 @@ function Dashboard({
               : 'Jalani satu tahun memajukan maksimal 12 bulan; proses berhenti jika ada kejadian yang perlu dipilih atau kehidupan berakhir.'}
         </p>
       </div>
+      <nav className="mobile-bottom-dock" aria-label="Navigasi cepat">
+        <button type="button" className="dock-home" onClick={() => onOpenPage('home')}>
+          <Home size={19} aria-hidden="true" /><span>Beranda</span>
+        </button>
+        <button type="button" onClick={() => setMobileActionsOpen(true)} aria-expanded={mobileActionsOpen}>
+          <Menu size={19} aria-hidden="true" /><span>Aplikasi</span>
+        </button>
+        <button type="button" className="dock-advance" disabled={!canAdvance} onClick={() => void advanceMonth()}>
+          <ArrowRight size={19} aria-hidden="true" /><span>Lanjut bulan</span>
+        </button>
+      </nav>
+      {mobileActionsOpen && (
+        <div className="mobile-sheet-backdrop" onClick={() => setMobileActionsOpen(false)}>
+          <section
+            className="mobile-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-actions-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mobile-sheet-handle" />
+            <div className="mobile-sheet-heading">
+              <div><span className="eyebrow">JELAJAHI KEHIDUPAN</span><h2 id="mobile-actions-title">Aplikasi & aktivitas</h2></div>
+              <button type="button" className="icon-button" aria-label="Tutup aplikasi" onClick={() => setMobileActionsOpen(false)}><X size={18} aria-hidden="true" /></button>
+            </div>
+            <div className="mobile-time-actions">
+              <button type="button" disabled={!canAdvance} onClick={() => { setMobileActionsOpen(false); void advanceMonth(); }}>
+                <ArrowRight size={17} aria-hidden="true" /><span><b>Jalani satu bulan</b><small>Proses dan simpan bulan berikutnya</small></span>
+              </button>
+              <button type="button" disabled={!canAdvance} onClick={() => { setMobileActionsOpen(false); void advanceYear(); }}>
+                <CalendarDays size={17} aria-hidden="true" /><span><b>Jalani satu tahun</b><small>Berhenti jika ada pilihan kejadian</small></span>
+              </button>
+            </div>
+            <div className="mobile-app-grid">
+              {navigationItems.filter((item) => item.id !== 'home').map(({ id, label, icon: Icon }) => (
+                <button type="button" className="mobile-app-tile" key={id} onClick={() => { onOpenPage(id); setMobileActionsOpen(false); }}>
+                  <span className={`mobile-app-icon app-icon-${id}`}><Icon size={20} aria-hidden="true" /></span>
+                  <b>{label}</b>
+                  <small>Buka {label.toLowerCase()}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
       {character.deathRecord && (
         <section className="panel death-summary" aria-labelledby="death-summary-title">
           <span className="eyebrow">RINGKASAN KEHIDUPAN</span>
           <h2 id="death-summary-title">Perjalanan berakhir pada usia {character.deathRecord.age}</h2>
           <p>{getMonthName(character.deathRecord.month ?? character.currentMonth)} {character.deathRecord.year} · {character.deathRecord.cause}</p>
+          <div className="finance-detail">
+            <div><span>Harta bersih saat akhir</span><b>{money(character.estateSettlement?.netValue ?? character.netWorth, currencyCode)}</b></div>
+            <div><span>Pendidikan tertinggi</span><b>{getEducationDisplayLabel(character.educationRecord)}</b></div>
+            <div><span>Karier terakhir</span><b>{getOccupationTitle(character.careerRecord.currentOccupationId, character.careerRecord.positionIndex)}</b></div>
+            <div><span>Keluarga tercatat</span><b>{character.children.length} anak · {character.relationships.filter((relationship) => relationship.status === 'active').length} relasi aktif</b></div>
+          </div>
           {character.estateSettlement && (
             <div className="estate-summary">
               <p>Harta simulasi {money(character.estateSettlement.grossValue, currencyCode)} · Utang dibayar {money(character.estateSettlement.debtsPaid, currencyCode)} · Sisa {money(character.estateSettlement.netValue, currencyCode)}</p>
@@ -541,6 +640,182 @@ function Dashboard({
         </section>
       )}
     </>
+  );
+}
+
+function PostGraduationPanel({
+  character,
+  isBusy,
+  onChoosePath,
+  onBeginCollegeAdmission,
+  onSelectProgram,
+  onPrepare,
+  onTakeTest,
+  onOpenPage,
+}: {
+  character: Character;
+  isBusy: boolean;
+  onChoosePath: (
+    path: Exclude<PostGraduationPath, 'undecided' | 'not_applicable'>,
+  ) => Promise<boolean>;
+  onBeginCollegeAdmission: () => Promise<boolean>;
+  onSelectProgram: (universityId: string, programId: string) => Promise<boolean>;
+  onPrepare: (activity: AdmissionPreparationActivity) => Promise<boolean>;
+  onTakeTest: () => Promise<boolean>;
+  onOpenPage: (page: PageId) => void;
+}) {
+  const [universityId, setUniversityId] = useState(character.admissionRecord?.selectedUniversityId ?? '');
+  const [programId, setProgramId] = useState(character.admissionRecord?.selectedProgramId ?? '');
+  const path = character.postGraduationPath ?? 'not_applicable';
+  const admission = character.admissionRecord ?? createInitialAdmissionRecord();
+  const currencyCode = character.birthInformation.location.currencyCode;
+  const priceFactor = getNominalPriceFactor(character.currentYear);
+  const tutoringCost = Math.round(250_000 * priceFactor);
+  const eligiblePrograms = getEligiblePrograms(character).filter((program) => program.level === 's1');
+  const availableUniversities = universities.filter((university) => (
+    !university.fictional
+    && eligiblePrograms.some((program) => (
+      university.faculties.some((faculty) => faculty.programIds.includes(program.id))
+    ))
+  ));
+  const selectedUniversity = availableUniversities.find((university) => university.id === universityId);
+  const universityPrograms = eligiblePrograms.filter((program) => (
+    selectedUniversity?.faculties.some((faculty) => faculty.programIds.includes(program.id))
+  ));
+  const chosenUniversity = universities.find((university) => (
+    university.id === admission.selectedUniversityId && !university.fictional
+  ));
+  const chosenProgram = studyPrograms.find((program) => program.id === admission.selectedProgramId);
+  const enrolled = character.educationRecord.status === 'enrolled'
+    && character.educationRecord.institutionId === admission.selectedUniversityId;
+
+  useEffect(() => {
+    setUniversityId(character.admissionRecord?.selectedUniversityId ?? '');
+    setProgramId(character.admissionRecord?.selectedProgramId ?? '');
+  }, [
+    character.id,
+    character.admissionRecord?.selectedUniversityId,
+    character.admissionRecord?.selectedProgramId,
+  ]);
+
+  if (path === 'not_applicable') return null;
+  if (path === 'undecided') {
+    return (
+      <section className="panel graduation-panel" aria-labelledby="graduation-title">
+        <span className="eyebrow">AWAL KEHIDUPAN DEWASA · USIA {character.age}</span>
+        <h2 id="graduation-title">Kamu telah lulus SMA/SMK. Apa langkah berikutnya?</h2>
+        <p>Pilih jalur untuk memulai. Waktu tidak akan berjalan sebelum kamu menentukan pilihan.</p>
+        <div className="graduation-options">
+          <article>
+            <GraduationCap size={22} aria-hidden="true" />
+            <h3>Lanjut kuliah</h3>
+            <p>Pilih kampus dan program studi, persiapkan diri, lalu ikuti tes masuk simulasi.</p>
+            <button type="button" className="primary-button" disabled={isBusy} onClick={() => void onChoosePath('college')}>Pilih kuliah</button>
+          </article>
+          <article>
+            <Briefcase size={22} aria-hidden="true" />
+            <h3>Mulai bekerja</h3>
+            <p>Lihat lowongan yang sesuai usia dan pendidikanmu.</p>
+            <button type="button" className="secondary-button" disabled={isBusy} onClick={() => void onChoosePath('work').then((success) => { if (success) onOpenPage('career'); })}>Cari pekerjaan</button>
+          </article>
+          <article>
+            <CalendarDays size={22} aria-hidden="true" />
+            <h3>Gap year</h3>
+            <p>Ambil jeda sebelum menentukan rencana berikutnya; simulasi bulanan akan terbuka.</p>
+            <button type="button" className="secondary-button" disabled={isBusy} onClick={() => void onChoosePath('gap_year')}>Pilih gap year</button>
+          </article>
+        </div>
+      </section>
+    );
+  }
+
+  if (path === 'work' || path === 'gap_year') {
+    return (
+      <section className="panel graduation-panel graduation-path-summary">
+        <span className="eyebrow">JALUR SETELAH SMA/SMK</span>
+        <h2>{path === 'work' ? 'Kamu memilih jalur kerja' : 'Kamu sedang menjalani gap year'}</h2>
+        <p>{path === 'work' ? 'Kelola lamaran dan pekerjaan melalui halaman Karier.' : 'Jalani bulan demi bulan, atau mulai persiapan kuliah kapan saja.'}</p>
+        <div className="choice-row">
+          {path === 'work' && <button type="button" className="secondary-button" onClick={() => onOpenPage('career')}>Buka karier</button>}
+          <button type="button" className="secondary-button" disabled={isBusy} onClick={() => void onBeginCollegeAdmission()}>Mulai persiapan kuliah</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (enrolled) {
+    return (
+      <section className="panel graduation-panel graduation-path-summary">
+        <span className="eyebrow">SELEKSI MASUK</span>
+        <h2>Kamu diterima di {chosenUniversity?.name ?? 'perguruan tinggi'}</h2>
+        <p>{chosenProgram?.name ?? 'Program studi'} · Tes masuk simulasi lulus dengan skor {admission.lastExamScore ?? '—'}/100.</p>
+        <button type="button" className="secondary-button" onClick={() => onOpenPage('education')}>Lihat pendidikan</button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel graduation-panel" aria-labelledby="admission-title">
+      <div className="panel-heading">
+        <div><span className="eyebrow">JALUR KULIAH</span><h2 id="admission-title">Persiapan tes masuk</h2></div>
+        <GraduationCap size={21} aria-hidden="true" />
+      </div>
+      <p className="footnote">Kampus dan program mengacu pada katalog resmi. Tes, tingkat kesulitan, dan ambang skor di sini hanya simulasi permainan; periksa situs resmi untuk persyaratan terbaru.</p>
+      {availableUniversities.length > 0 ? (
+        <div className="admission-selectors">
+          <label className="education-effort">Kampus
+            <select value={universityId} disabled={isBusy} onChange={(event) => {
+              setUniversityId(event.target.value);
+              setProgramId('');
+            }}>
+              <option value="">Pilih kampus</option>
+              {availableUniversities.map((university) => <option key={university.id} value={university.id}>{university.name} · {university.city}</option>)}
+            </select>
+          </label>
+          <label className="education-effort">Program studi
+            <select value={programId} disabled={isBusy || !selectedUniversity} onChange={(event) => setProgramId(event.target.value)}>
+              <option value="">Pilih program</option>
+              {universityPrograms.map((program) => <option key={program.id} value={program.id}>{program.name}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isBusy || !universityId || !programId}
+            onClick={() => void onSelectProgram(universityId, programId)}
+          >
+            Simpan tujuan
+          </button>
+        </div>
+      ) : <p className="empty-copy">Belum ada program S1 yang memenuhi syarat pendidikanmu.</p>}
+
+      {admission.selectedUniversityId && admission.selectedProgramId && (
+        <div className="admission-progress">
+          <div className="admission-progress-heading">
+            <div><b>{chosenProgram?.name} · {chosenUniversity?.name}</b><span>Persiapan tes {admission.preparation}/100</span></div>
+            {chosenUniversity?.officialUrl && (
+              <a href={chosenUniversity.officialUrl} target="_blank" rel="noreferrer">Situs resmi</a>
+            )}
+          </div>
+          <progress value={admission.preparation} max={100} aria-label="Persiapan tes masuk" />
+          {chosenUniversity?.admissionUrl && <a className="admission-source" href={chosenUniversity.admissionUrl} target="_blank" rel="noreferrer">Info penerimaan resmi · {chosenUniversity.name}</a>}
+          {admission.status === 'failed' && <p className="admission-result">Skor terakhir {admission.lastExamScore}/100 belum mencapai ambang simulasi {chosenUniversity?.admissionDifficulty ?? 65}. Tes berikutnya tersedia pada tahun permainan berikutnya.</p>}
+          {admission.status === 'admitted' && <p className="admission-result">Kamu lulus tes masuk simulasi.</p>}
+          <div className="choice-row">
+            <button type="button" className="secondary-button" disabled={isBusy || admission.status === 'admitted' || character.cash < tutoringCost || character.stats.energy < 5} onClick={() => void onPrepare('tutoring')}>
+              Bimbel · {money(tutoringCost, currencyCode)}
+            </button>
+            <button type="button" className="secondary-button" disabled={isBusy || admission.status === 'admitted' || character.stats.energy < 10} onClick={() => void onPrepare('self_study')}>
+              Belajar mandiri
+            </button>
+            <button type="button" className="primary-button" disabled={isBusy || admission.status === 'admitted' || admission.lastExamYear === character.currentYear} onClick={() => void onTakeTest()}>
+              Ikuti tes masuk simulasi
+            </button>
+          </div>
+          <p className="footnote">Skor dipengaruhi kecerdasan dan persiapan. Satu percobaan tes per tahun; persiapan mengurangi energi dan bimbel menggunakan saldo.</p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -732,6 +1007,7 @@ function PropertyPage({
 function EducationPage({
   character,
   onEnroll,
+  onBeginCollegeAdmission,
   onScholarship,
   onStudyEffort,
   onLeave,
@@ -742,6 +1018,7 @@ function EducationPage({
 }: {
   character: Character;
   onEnroll: (programId: string, universityId: string) => void;
+  onBeginCollegeAdmission: () => void;
   onScholarship: (scholarshipId: string) => void;
   onStudyEffort: (effort: StudyEffort) => void;
   onLeave: () => void;
@@ -777,6 +1054,16 @@ function EducationPage({
   return (
     <>
       <PageHeading eyebrow="PENDIDIKAN" title="Pendidikan" description="Pilih jalur studi, kelola perkuliahan, dan tinjau hasil akademik yang tersimpan." />
+      {character.age >= 18
+        && ['work', 'gap_year'].includes(character.postGraduationPath ?? '')
+        && record.status !== 'enrolled' && (
+          <section className="panel graduation-path-summary">
+            <span className="eyebrow">JALUR KULIAH</span>
+            <h2>Ikuti tes masuk sebelum mendaftar program S1</h2>
+            <p>Persiapkan diri di beranda; tes masuk simulasi diperlukan untuk mendaftar program sarjana.</p>
+            <button type="button" className="secondary-button" disabled={isBusy} onClick={onBeginCollegeAdmission}>Mulai persiapan kuliah</button>
+          </section>
+        )}
       <section className="panel">
         <div className="panel-heading">
           <div><span className="eyebrow">STATUS SAAT INI</span><h2>{getEducationDisplayLabel(record)}</h2></div>
@@ -833,16 +1120,21 @@ function EducationPage({
               <article className="education-option" key={item.id}>
                 <div><b>{item.name}</b><p>{getEducationLevelLabel(item.level)} · {item.durationSemesters} semester · {money(Math.round(item.tuitionPerSemester * priceFactor), currencyCode)} per semester</p></div>
                 <div className="choice-row">
-                  {getEligibleUniversities(item.id).map((university) => (
-                    <button className="secondary-button" key={university.id} disabled={isBusy} onClick={() => onEnroll(item.id, university.id)}>
-                      Daftar · {university.name}
-                    </button>
+                  {getEligibleUniversities(item.id).filter((university) => !university.fictional).map((university) => (
+                    item.level === 's1'
+                      && character.postGraduationPath
+                      && character.postGraduationPath !== 'not_applicable'
+                      && character.admissionRecord?.status !== 'admitted'
+                      ? <span className="footnote" key={university.id}>Lulus tes masuk simulasi untuk mendaftar di {university.name}.</span>
+                      : <button className="secondary-button" key={university.id} disabled={isBusy} onClick={() => onEnroll(item.id, university.id)}>
+                        Daftar · {university.name}
+                      </button>
                   ))}
                 </div>
               </article>
             ))}
           </div>
-          <p className="footnote">Institusi dan program di katalog ini adalah bagian fiktif dari simulasi. Biaya memakai nilai nominal sesuai era permainan.</p>
+          <p className="footnote">Kampus nyata ditautkan ke situs resminya. Tes dan biaya dalam permainan adalah simulasi, bukan informasi penerimaan atau UKT resmi.</p>
         </section>
       )}
 
@@ -1119,6 +1411,10 @@ function DigitalLifePage({
   onCreateAccount,
   onActivateMonetization,
   onPublishContent,
+  onOpenBankAccount,
+  onDepositBank,
+  onWithdrawBank,
+  onTransferBank,
   isBusy,
 }: {
   character: Character;
@@ -1134,6 +1430,14 @@ function DigitalLifePage({
     title: string;
     description: string;
   }) => Promise<boolean>;
+  onOpenBankAccount: (bankId: string) => Promise<boolean>;
+  onDepositBank: (accountId: string, amount: number) => Promise<boolean>;
+  onWithdrawBank: (accountId: string, amount: number) => Promise<boolean>;
+  onTransferBank: (
+    sourceAccountId: string,
+    destinationAccountId: string,
+    amount: number,
+  ) => Promise<boolean>;
   isBusy: boolean;
 }) {
   const [selectedApp, setSelectedApp] = useState<DigitalAppId>('wallet');
@@ -1143,6 +1447,9 @@ function DigitalLifePage({
   const [category, setCategory] = useState<DigitalContentCategory>('vlog');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [bankAmount, setBankAmount] = useState('');
+  const [sourceBankAccountId, setSourceBankAccountId] = useState('');
+  const [destinationBankAccountId, setDestinationBankAccountId] = useState('');
   const currencyCode = character.birthInformation.location.currencyCode;
   const smartphone = character.digitalLife.smartphone;
   const phoneModel = smartphone ? getSmartphoneModel(smartphone.modelId) : null;
@@ -1173,6 +1480,8 @@ function DigitalLifePage({
     wallet: CreditCard,
   };
   const accountPlatform = currentAccount ? getDigitalPlatform(currentAccount.platform) : null;
+  const bankAmountValue = Number(bankAmount);
+  const hasValidBankAmount = Number.isSafeInteger(bankAmountValue) && bankAmountValue > 0;
 
   return (
     <>
@@ -1185,31 +1494,51 @@ function DigitalLifePage({
         </section>
       ) : (
         <>
-          <section className="panel">
+          <section className="panel phone-launcher-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">APP LAUNCHER</span><h2>Aplikasi ponsel</h2></div>
+              <div><span className="eyebrow">PERANGKAT SIMULASI</span><h2>Aplikasi ponsel</h2></div>
               <Smartphone size={19} aria-hidden="true" />
             </div>
-            {smartphone
-              ? <p className="footnote">{phoneModel?.name ?? smartphone.modelId} · Kondisi {Math.round(smartphone.condition)}% · Nomor {smartphone.phoneNumber}</p>
-              : <p className="empty-copy">Belum memiliki smartphone. Gunakan Pasar Digital untuk membeli perangkat pertamamu.</p>}
-            <div className="digital-app-launcher">
-              {availableApps.map((app) => {
-                const Icon = selectedAppIcon[app.id];
-                return (
-                  <button
-                    key={app.id}
-                    type="button"
-                    className={`digital-app-button${selectedApp === app.id ? ' is-active' : ''}`}
-                    aria-pressed={selectedApp === app.id}
-                    onClick={() => setSelectedApp(app.id)}
-                  >
-                    <Icon size={18} aria-hidden="true" />
-                    <span>{app.name}</span>
-                  </button>
-                );
-              })}
+            <div className="phone-frame">
+              <div className="phone-earpiece" aria-hidden="true" />
+              <div className="phone-screen">
+                <div className="phone-status-bar">
+                  <span>{getMonthName(character.currentMonth).slice(0, 3)} {character.currentYear}</span>
+                  <span className="phone-status-icons" aria-label="Status perangkat">● ● ▰</span>
+                </div>
+                <div className="phone-screen-heading">
+                  <b>{phoneModel?.name ?? 'Layar utama'}</b>
+                  <span>{smartphone ? `Kondisi ${Math.round(smartphone.condition)}%` : 'Pratinjau perangkat'}</span>
+                </div>
+                <div className="phone-widget">
+                  <span>Saldo tersedia</span>
+                  <b>{money(character.cash, currencyCode)}</b>
+                  <small>{character.identity.firstName} · INDOLIFE</small>
+                </div>
+                <div className="digital-app-launcher">
+                  {availableApps.map((app) => {
+                    const Icon = selectedAppIcon[app.id];
+                    return (
+                      <button
+                        key={app.id}
+                        type="button"
+                        className={`digital-app-button${selectedApp === app.id ? ' is-active' : ''}`}
+                        aria-pressed={selectedApp === app.id}
+                        onClick={() => setSelectedApp(app.id)}
+                      >
+                        <span className={`phone-app-icon phone-icon-${app.id}`}><Icon size={20} aria-hidden="true" /></span>
+                        <span>{app.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="phone-dock" aria-hidden="true"><span /><span /><span /><span /></div>
+              </div>
+              <div className="phone-home-indicator" aria-hidden="true" />
             </div>
+            {smartphone
+              ? <p className="footnote phone-device-meta">{phoneModel?.name ?? smartphone.modelId} · Nomor {smartphone.phoneNumber} · Pilih aplikasi untuk membuka fiturnya di bawah.</p>
+              : <p className="empty-copy phone-device-meta">Belum memiliki smartphone. Pasar Digital menyediakan perangkat dan aplikasi yang sesuai dengan era permainan.</p>}
           </section>
 
           {selectedApp === 'market' && (
@@ -1260,6 +1589,58 @@ function DigitalLifePage({
                 <div><span>Pemasukan tercatat</span><b>{money(character.lastYearIncome, currencyCode)}</b></div>
                 <div><span>Pengeluaran tercatat</span><b>{money(character.lastYearExpenses, currencyCode)}</b></div>
               </div>
+              <h3 className="digital-section-title">Rekening bank</h3>
+              <label className="education-effort">Jumlah transaksi
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={bankAmount}
+                  disabled={isBusy}
+                  onChange={(event) => setBankAmount(event.target.value)}
+                  placeholder="Jumlah dalam rupiah"
+                />
+              </label>
+              {character.digitalLife.bankAccounts.map((account) => {
+                const bank = digitalBanks.find((item) => item.id === account.bankId);
+                if (!bank) return null;
+                return (
+                  <article className="education-option" key={account.id}>
+                    <div><b>{bank.name} · {account.accountNumber}</b><p>Saldo tabungan {money(account.balance, currencyCode)} · bunga {(bank.annualInterestRate * 100).toFixed(1)}% per tahun</p></div>
+                    <div className="choice-row">
+                      <button className="secondary-button" disabled={isBusy || !hasValidBankAmount || character.cash < bankAmountValue} onClick={() => void onDepositBank(account.id, bankAmountValue)}>Setor</button>
+                      <button className="secondary-button" disabled={isBusy || !hasValidBankAmount || account.balance < bankAmountValue} onClick={() => void onWithdrawBank(account.id, bankAmountValue)}>Tarik</button>
+                    </div>
+                  </article>
+                );
+              })}
+              {character.digitalLife.bankAccounts.length > 1 && (
+                <div className="digital-form">
+                  <label className="education-effort">Dari rekening
+                    <select value={sourceBankAccountId} disabled={isBusy} onChange={(event) => setSourceBankAccountId(event.target.value)}>
+                      <option value="">Pilih rekening asal</option>
+                      {character.digitalLife.bankAccounts.map((account) => <option key={account.id} value={account.id}>{digitalBanks.find((item) => item.id === account.bankId)?.name} · {account.accountNumber}</option>)}
+                    </select>
+                  </label>
+                  <label className="education-effort">Ke rekening
+                    <select value={destinationBankAccountId} disabled={isBusy} onChange={(event) => setDestinationBankAccountId(event.target.value)}>
+                      <option value="">Pilih rekening tujuan</option>
+                      {character.digitalLife.bankAccounts.map((account) => <option key={account.id} value={account.id} disabled={account.id === sourceBankAccountId}>{digitalBanks.find((item) => item.id === account.bankId)?.name} · {account.accountNumber}</option>)}
+                    </select>
+                  </label>
+                  <button className="secondary-button" disabled={isBusy || !hasValidBankAmount || !sourceBankAccountId || !destinationBankAccountId || sourceBankAccountId === destinationBankAccountId} onClick={() => void onTransferBank(sourceBankAccountId, destinationBankAccountId, bankAmountValue)}>Transfer antar rekening</button>
+                </div>
+              )}
+              {character.age < 18 && <p className="footnote">Pembukaan rekening bank tersedia mulai usia 18 tahun.</p>}
+              {digitalBanks.filter((bank) => bank.foundedYear <= character.currentYear).map((bank) => {
+                const owned = character.digitalLife.bankAccounts.some((account) => account.bankId === bank.id);
+                return (
+                  <article className="education-option" key={bank.id}>
+                    <div><b>{bank.name}</b><p>Bunga {(bank.annualInterestRate * 100).toFixed(1)}% per tahun · Biaya buka {money(bank.openingFee, currencyCode)} · Transfer {money(bank.transferFee, currencyCode)}</p></div>
+                    <button className="secondary-button" disabled={isBusy || character.age < 18 || owned || character.cash < bank.openingFee} onClick={() => void onOpenBankAccount(bank.id)}>{owned ? 'Rekening aktif' : 'Buka rekening'}</button>
+                  </article>
+                );
+              })}
               {smartphone && dataPlan && !planExpired && (
                 <p className="footnote">{dataPackages.find((item) => item.id === dataPlan.packageId)?.name ?? 'Paket data'} · {Math.round(dataPlan.remainingMb)} MB tersisa · Berakhir {getMonthName((dataPlan.expiresAtMonthIndex % 12) + 1)} {Math.floor(dataPlan.expiresAtMonthIndex / 12)}</p>
               )}
@@ -1277,13 +1658,20 @@ function DigitalLifePage({
               {character.digitalLife.transactions.length > 0 && (
                 <>
                   <h3 className="digital-section-title">Transaksi digital terbaru</h3>
-                  {character.digitalLife.transactions.slice(-5).reverse().map((transaction) => (
-                    <article className="event-history-entry" key={transaction.id}>
-                      <span>{getMonthName(transaction.month)} {transaction.year} · {transaction.type === 'creator_income' || transaction.type === 'phone_sale' ? 'Pemasukan' : 'Pengeluaran'}</span>
-                      <b>{transaction.description}</b>
-                      <p>{money(transaction.amount, currencyCode)}</p>
-                    </article>
-                  ))}
+                  {character.digitalLife.transactions.slice(-5).reverse().map((transaction) => {
+                    const category = ['bank_deposit', 'bank_withdrawal', 'bank_transfer'].includes(transaction.type)
+                      ? 'Mutasi dana'
+                      : ['creator_income', 'sponsor_income', 'phone_sale', 'bank_interest'].includes(transaction.type)
+                        ? 'Pemasukan'
+                        : 'Pengeluaran';
+                    return (
+                      <article className="event-history-entry" key={transaction.id}>
+                        <span>{getMonthName(transaction.month)} {transaction.year} · {category}</span>
+                        <b>{transaction.description}</b>
+                        <p>{money(transaction.amount, currencyCode)}</p>
+                      </article>
+                    );
+                  })}
                 </>
               )}
             </section>
@@ -1319,7 +1707,7 @@ function DigitalLifePage({
                 );
               })}
               {character.digitalLife.accounts.length === 0 && <p className="empty-copy">Belum ada akun sosial. Buat akun setelah memiliki ponsel.</p>}
-              <p className="footnote">Level kreator: {getDigitalCreatorLevel(character)}. Audiens tumbuh dari hasil konten, dan monetisasi baru tersedia setelah syarat platform terpenuhi.</p>
+              <p className="footnote">Gelar: {getDigitalCreatorLevel(character)} · Skill kreator: {character.digitalLife.creatorSkill}/100. Gelar terbuka permanen setelah pencapaian audiens, tayangan, pendapatan, jumlah konten, dan engagement terpenuhi.</p>
             </section>
           )}
 
@@ -1861,6 +2249,11 @@ export default function App() {
     advanceMonth,
     advanceYear,
     advanceMode,
+    choosePostGraduationPath,
+    beginCollegeAdmission,
+    selectAdmissionProgram,
+    prepareForAdmission,
+    takeAdmissionTest,
     enrollInProgram,
     applyForScholarship,
     setStudyEffort,
@@ -1899,6 +2292,10 @@ export default function App() {
     createSocialAccount,
     activateDigitalMonetization,
     publishDigitalContent,
+    openDigitalBankAccount,
+    depositToDigitalBank,
+    withdrawFromDigitalBank,
+    transferDigitalBankFunds,
     saveCurrentGame,
   } = useGameStore();
   useEffect(() => {
@@ -2001,6 +2398,12 @@ export default function App() {
               isBusy={isAdvancing || persistenceStatus === 'saving'}
               onEditCharacter={() => setEditingProfile(true)}
               onContinueAsHeir={continueAsHeir}
+              onChoosePostGraduationPath={choosePostGraduationPath}
+              onBeginCollegeAdmission={beginCollegeAdmission}
+              onSelectAdmissionProgram={selectAdmissionProgram}
+              onPrepareForAdmission={prepareForAdmission}
+              onTakeAdmissionTest={takeAdmissionTest}
+              onOpenPage={setPage}
             />
           )}
           {page === 'activity' && <ActivityPage history={history} eventProgress={eventProgress} />}
@@ -2027,6 +2430,10 @@ export default function App() {
               onCreateAccount={createSocialAccount}
               onActivateMonetization={activateDigitalMonetization}
               onPublishContent={publishDigitalContent}
+              onOpenBankAccount={openDigitalBankAccount}
+              onDepositBank={depositToDigitalBank}
+              onWithdrawBank={withdrawFromDigitalBank}
+              onTransferBank={transferDigitalBankFunds}
               isBusy={isAdvancing || persistenceStatus === 'saving' || activeEvent !== null}
             />
           )}
@@ -2042,6 +2449,7 @@ export default function App() {
             <EducationPage
               character={character}
               onEnroll={(programId, universityId) => void enrollInProgram(programId, universityId)}
+              onBeginCollegeAdmission={() => void beginCollegeAdmission()}
               onScholarship={(scholarshipId) => void applyForScholarship(scholarshipId)}
               onStudyEffort={(effort) => void setStudyEffort(effort)}
               onLeave={() => void takeAcademicLeave()}

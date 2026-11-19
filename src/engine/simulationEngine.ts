@@ -89,7 +89,74 @@ function getAnnualDeathRisk(character: Character): number {
           : 0.03;
   const healthRisk = ((100 - character.stats.health) / 100)
     * (character.age >= 60 ? 0.08 : 0.005);
-  return Math.min(0.85, baseRisk + healthRisk);
+  const economicRisk = character.age >= 60 && character.stats.wealth < 15
+    ? 0.006
+    : character.age >= 60 && character.stats.wealth < 30
+      ? 0.003
+      : 0;
+  return Math.max(0, Math.min(0.85, baseRisk + healthRisk + economicRisk));
+}
+
+export interface LifespanEstimate {
+  expectedAge: number;
+  likelyAgeRange: [number, number];
+  currentAnnualRisk: number;
+  factors: string[];
+}
+
+export function getLifespanEstimate(character: Character): LifespanEstimate | null {
+  if (character.status !== 'alive') return null;
+
+  let survivalProbability = 1;
+  let expectedAge = 0;
+  let deathProbabilityAccumulated = 0;
+  let lowerAge = character.age;
+  let upperAge = character.age;
+  let lowerFound = false;
+  let upperFound = false;
+  const projectedHealth = Math.max(0, Math.min(100, character.stats.health));
+  const factors = character.stats.health < 45
+    ? ['Kesehatan rendah meningkatkan risiko simulasi.']
+    : character.stats.health >= 80
+      ? ['Kondisi kesehatan saat ini menurunkan risiko dibanding karakter dengan kesehatan rendah.']
+      : [];
+  if (character.stats.wealth < 15) {
+    factors.push('Kondisi ekonomi rendah sedikit meningkatkan risiko pada usia lanjut.');
+  } else if (character.stats.wealth >= 70) {
+    factors.push('Kondisi ekonomi baik mengurangi sebagian risiko pada usia lanjut.');
+  }
+  factors.push('Risiko meningkat seiring usia; perkiraan bukan tanggal kematian pasti.');
+
+  for (let age = character.age + 1; age <= 120; age += 1) {
+    const yearsAboveSixty = Math.max(0, age - Math.max(60, character.age));
+    const futureHealth = Math.max(0, projectedHealth - yearsAboveSixty);
+    const risk = getAnnualDeathRisk({
+      ...character,
+      age,
+      stats: { ...character.stats, health: futureHealth },
+    });
+    const deathProbability = survivalProbability * risk;
+    deathProbabilityAccumulated += deathProbability;
+    expectedAge += age * deathProbability;
+    survivalProbability *= 1 - risk;
+
+    if (!lowerFound && deathProbabilityAccumulated >= 0.1) {
+      lowerAge = age;
+      lowerFound = true;
+    }
+    if (!upperFound && deathProbabilityAccumulated >= 0.9) {
+      upperAge = age;
+      upperFound = true;
+    }
+  }
+  expectedAge += 121 * survivalProbability;
+
+  return {
+    expectedAge: Math.round(expectedAge),
+    likelyAgeRange: [lowerAge, upperFound ? upperAge : 120],
+    currentAnnualRisk: getAnnualDeathRisk(character),
+    factors,
+  };
 }
 
 export function simulateMonth(

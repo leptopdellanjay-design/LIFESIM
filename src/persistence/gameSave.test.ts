@@ -161,6 +161,34 @@ describe('IndexedDB game saves', () => {
       accounts: [],
       content: [],
       transactions: [],
+      creatorSkill: 0,
+      creatorTitles: [],
+      bankAccounts: [],
+    });
+  });
+
+  it('normalizes legacy backups with no post-graduation or admission fields', async () => {
+    await createActiveGameIfAbsent({
+      character,
+      history: ['2020: Catatan lama.'],
+      activeEvent: null,
+      eventProgress,
+    }, 'slot-one');
+    const backup = JSON.parse(await exportGameBackup('slot-one')) as {
+      character: Record<string, unknown>;
+    };
+    delete backup.character.postGraduationPath;
+    delete backup.character.admissionRecord;
+
+    await importGameBackup(JSON.stringify(backup), 'slot-restored');
+
+    expect((await loadActiveGame('slot-restored'))?.character).toMatchObject({
+      postGraduationPath: 'not_applicable',
+      admissionRecord: {
+        status: 'not_started',
+        selectedUniversityId: null,
+        selectedProgramId: null,
+      },
     });
   });
 
@@ -248,6 +276,9 @@ describe('IndexedDB game saves', () => {
       accounts: [],
       content: [],
       transactions: [],
+      creatorSkill: 0,
+      creatorTitles: [],
+      bankAccounts: [],
     });
     expect(migrated?.eventProgress.lastEventMonths).toEqual({});
     expect(migrated?.character.family.members[0].trust).toBe(
@@ -294,6 +325,73 @@ describe('IndexedDB game saves', () => {
       .toBeTruthy();
     expect(migrated?.character.family.members.find((member) => member.role === 'mother')?.occupationId)
       .toBeTruthy();
+    await migratedDatabase.delete();
+  });
+
+  it('migrates version 11 saves with digital progression and bank defaults', async () => {
+    const name = `indolife-v11-digital-${Date.now()}`;
+    const legacyDatabase = new Dexie(name);
+    legacyDatabase.version(11).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    });
+    await legacyDatabase.open();
+    const legacyCharacter = {
+      ...character,
+      digitalLife: { ...character.digitalLife },
+    };
+    Reflect.deleteProperty(legacyCharacter.digitalLife, 'creatorSkill');
+    Reflect.deleteProperty(legacyCharacter.digitalLife, 'creatorTitles');
+    Reflect.deleteProperty(legacyCharacter.digitalLife, 'bankAccounts');
+    await legacyDatabase.table('saves').add({
+      id: 'active',
+      version: 6,
+      character: legacyCharacter,
+      history: [],
+      activeEvent: null,
+      eventProgress,
+      updatedAt: 1,
+    });
+    legacyDatabase.close();
+
+    const migratedDatabase = new GameDatabase(name);
+    const migrated = await migratedDatabase.saves.get('active');
+
+    expect(migrated?.character.digitalLife.creatorSkill).toBe(0);
+    expect(migrated?.character.digitalLife.creatorTitles).toEqual([]);
+    expect(migrated?.character.digitalLife.bankAccounts).toEqual([]);
+    expect(migrated?.version).toBe(6);
+    await migratedDatabase.delete();
+  });
+
+  it('migrates version 12 saves with defaults for the graduation and admission flow', async () => {
+    const name = `indolife-v12-admission-${Date.now()}`;
+    const legacyDatabase = new Dexie(name);
+    legacyDatabase.version(12).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    });
+    await legacyDatabase.open();
+    const legacyCharacter = { ...character };
+    Reflect.deleteProperty(legacyCharacter, 'postGraduationPath');
+    Reflect.deleteProperty(legacyCharacter, 'admissionRecord');
+    await legacyDatabase.table('saves').add({
+      id: 'active',
+      version: 6,
+      character: legacyCharacter,
+      history: [],
+      activeEvent: null,
+      eventProgress,
+      updatedAt: 1,
+    });
+    legacyDatabase.close();
+
+    const migratedDatabase = new GameDatabase(name);
+    const migrated = await migratedDatabase.saves.get('active');
+
+    expect(migrated?.character.postGraduationPath).toBe('not_applicable');
+    expect(migrated?.character.admissionRecord?.status).toBe('not_started');
+    expect(migrated?.character.admissionRecord?.examAttempts).toBe(0);
     await migratedDatabase.delete();
   });
 

@@ -1,6 +1,7 @@
 import Dexie from 'dexie';
 import { gameDatabase, type PersistedGame } from './gameDatabase';
 import { normalizeDigitalLifeRecord } from '../engine/digitalLifeEngine';
+import { normalizePostGraduationRecords } from '../engine/admissionEngine';
 
 export const DEFAULT_SAVE_SLOT_ID = 'active';
 const ACTIVE_SLOT_SETTING_ID = 'active-save-slot';
@@ -182,7 +183,7 @@ export async function importGameBackup(
   }
   await gameDatabase.saves.put({
     ...parsed,
-    character: normalizeDigitalLifeRecord(parsed.character),
+    character: normalizePostGraduationRecords(normalizeDigitalLifeRecord(parsed.character)),
     id: targetSlotId,
     version: 6,
     updatedAt: Date.now(),

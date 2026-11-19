@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createCharacter, initialCharacterDraft } from './characterCreation';
-import { getAnnualDeathRisk, simulateMonth } from './simulationEngine';
+import { getAnnualDeathRisk, getLifespanEstimate, simulateMonth } from './simulationEngine';
 import { getLifeStage } from './lifeStages';
 import { createEducationRecordFromLegacy } from './educationEngine';
 import { createCareerRecordFromLegacy } from './careerEngine';
@@ -170,5 +170,27 @@ describe('monthly simulation', () => {
     expect(getAnnualDeathRisk(healthySenior)).toBeGreaterThan(
       getAnnualDeathRisk({ ...healthySenior, age: 30 }),
     );
+  });
+
+  it('provides a deterministic, health-sensitive lifespan range instead of a fixed death age', () => {
+    const healthy = makeCharacter({
+      age: 30,
+      stats: { ...makeCharacter().stats, health: 90, wealth: 80 },
+    });
+    const unhealthy = {
+      ...healthy,
+      stats: { ...healthy.stats, health: 25, wealth: 5 },
+    };
+    const estimate = getLifespanEstimate(healthy);
+    const repeatedEstimate = getLifespanEstimate(healthy);
+    const vulnerableEstimate = getLifespanEstimate(unhealthy);
+
+    expect(estimate).toEqual(repeatedEstimate);
+    expect(estimate?.expectedAge).toBeGreaterThan(healthy.age);
+    expect(estimate?.likelyAgeRange[0]).toBeLessThanOrEqual(estimate!.expectedAge);
+    expect(estimate?.likelyAgeRange[1]).toBeGreaterThanOrEqual(estimate!.expectedAge);
+    expect(vulnerableEstimate?.expectedAge).toBeLessThan(estimate!.expectedAge);
+    expect(vulnerableEstimate?.currentAnnualRisk).toBeGreaterThan(estimate!.currentAnnualRisk);
+    expect(getLifespanEstimate({ ...healthy, status: 'deceased' })).toBeNull();
   });
 });

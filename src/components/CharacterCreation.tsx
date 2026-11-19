@@ -17,6 +17,8 @@ import type {
 } from '../types/game';
 import { CharacterPortrait } from './CharacterPortrait';
 
+const STARTING_AGE = 18;
+
 const steps = [
   'Identitas',
   'Tempat lahir',
@@ -121,7 +123,7 @@ export function CharacterCreation() {
   const cities = getCities(draft.countryCode, draft.province);
   const preview = useMemo(() => {
     if (Object.keys(validateCharacterDraft(draft)).length > 0) return null;
-    return createCharacter(draft, { idFactory: () => 'character-preview' });
+    return createCharacter(draft, { idFactory: () => 'character-preview', startAge: STARTING_AGE });
   }, [draft]);
 
   const updateDraft = <K extends keyof CharacterDraft>(key: K, value: CharacterDraft[K]) => {
@@ -156,7 +158,7 @@ export function CharacterCreation() {
     try {
       const character = preview
         ? { ...preview, id: createCharacterId() }
-        : createCharacter(draft);
+        : createCharacter(draft, { startAge: STARTING_AGE });
       const started = await startLife(character);
       const state = useGameStore.getState();
       if (!started && !state.character && state.persistenceStatus !== 'error') {
@@ -272,7 +274,7 @@ export function CharacterCreation() {
               <label className="field date-field">
                 <span>Tanggal lahir</span>
                 <input type="date" min="1900-01-01" max={todayDate} value={draft.birthDate} aria-invalid={Boolean(errors.birthDate)} onChange={(event) => updateDraft('birthDate', event.target.value)} />
-                <small>Tahun lahir menentukan era awal perjalanan.</small>
+                <small>Permainan dimulai saat karakter berusia 18 tahun, setelah lulus SMA/SMK.</small>
                 {fieldError(errors, 'birthDate')}
               </label>
               <fieldset className="field-set avatar-field">
@@ -406,11 +408,11 @@ export function CharacterCreation() {
                     <div><span className="eyebrow">KARAKTER BARU</span><h3>{preview.identity.firstName} {preview.identity.lastName}</h3><p>{preview.identity.gender === 'male' ? 'Laki-laki' : preview.identity.gender === 'female' ? 'Perempuan' : 'Lainnya'} · Lahir {preview.birthInformation.date}</p></div>
                   </div>
                   <div className="confirmation-block">
-                    <div className="confirmation-block-heading"><h3>Tempat dan waktu lahir</h3><button type="button" onClick={() => setStep(0)}>Ubah identitas</button></div>
-                    <p>{preview.birthInformation.location.city}, {preview.birthInformation.location.province}, Indonesia · Tahun {preview.currentYear}</p>
+                    <div className="confirmation-block-heading"><h3>Tempat lahir dan awal permainan</h3><button type="button" onClick={() => setStep(0)}>Ubah identitas</button></div>
+                    <p>{preview.birthInformation.location.city}, {preview.birthInformation.location.province}, Indonesia · Usia {preview.age} · Tahun permainan {preview.currentYear}</p>
                     <div className="era-callout"><b>{yearContext.decadeLabel}</b><span>{yearContext.technologySummary}</span></div>
                     {!yearContext.smartphoneAvailable && <p className="asset-list">Smartphone belum tersedia pada tahun ini.</p>}
-                    <p className="asset-list"><b>{preview.birthEvent.title}:</b> {preview.birthEvent.description}</p>
+                    <p className="asset-list"><b>Kelulusan:</b> Karakter memulai simulasi setelah lulus SMA/SMK pada usia 18 tahun.</p>
                   </div>
                   <div className="confirmation-block">
                     <div className="confirmation-block-heading"><h3>Keluarga dan ekonomi</h3><button type="button" onClick={() => setStep(2)}>Ubah keluarga</button></div>
@@ -430,7 +432,7 @@ export function CharacterCreation() {
                     <p>{draft.personalityTraits.map((trait) => personalityOptions.find((option) => option.id === trait)?.label).join(', ')}</p>
                   </div>
                   <div className="confirmation-block stats-confirmation">
-                    <h3>Statistik awal <span>· Usia 0</span></h3>
+                    <h3>Statistik awal <span>· Usia {preview.age}</span></h3>
                     <div className="initial-stat-grid">
                       {statLabels.map(({ key, label }) => <div key={key}><span>{label}</span><b>{preview.stats[key]}<small>/100</small></b></div>)}
                     </div>

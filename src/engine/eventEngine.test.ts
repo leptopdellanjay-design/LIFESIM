@@ -4,6 +4,7 @@ import { extendedLifeEvents } from '../data/events/extendedLifeEvents';
 import { lifeEventLibrary } from '../data/events';
 import { educationCareerEvents } from '../data/events/educationCareerEvents';
 import { calendarEvents } from '../data/events/calendarEvents';
+import { digitalEvents } from '../data/events/digitalEvents';
 import { applyConsequence } from './consequenceEngine';
 import {
   createEmptyEventProgress,
@@ -12,7 +13,7 @@ import {
   recordEventChoice,
   selectLifeEvent,
 } from './eventEngine';
-import type { LifeEvent, PersonalityTrait } from '../types/game';
+import type { DigitalSocialAccount, LifeEvent, PersonalityTrait } from '../types/game';
 
 const character = createCharacter({
   ...initialCharacterDraft,
@@ -277,6 +278,55 @@ describe('life event engine', () => {
       ...choice,
       requirements: { maxDebt: 0 },
     })).toBeNull();
+  });
+
+  it('gates sponsor events on real account state and applies sponsor effects to the creator account', () => {
+    const sponsor = digitalEvents.find((item) => item.id === 'digital-sponsored-campaign')!;
+    const adult = { ...character, age: 26, currentYear: 2026 };
+    const account: DigitalSocialAccount = {
+      id: 'sponsor-account',
+      platform: 'tiklife',
+      username: 'nara',
+      followers: 1_000,
+      subscribers: 0,
+      totalViews: 10_000,
+      monetized: false,
+      createdYear: 2026,
+      createdMonth: 6,
+    };
+    const unmonetized = {
+      ...adult,
+      digitalLife: { ...adult.digitalLife, accounts: [account] },
+    };
+    const monetized = {
+      ...unmonetized,
+      digitalLife: {
+        ...unmonetized.digitalLife,
+        accounts: [{ ...account, followers: 150_000, monetized: true }],
+      },
+    };
+    const premiumChoice = sponsor.choices.find((choice) => choice.id === 'digital-sponsor-premium')!;
+
+    expect(selectLifeEvent(adult, createEmptyEventProgress(), () => 0, [sponsor])).toBeNull();
+    expect(selectLifeEvent(unmonetized, createEmptyEventProgress(), () => 0, [sponsor])).toBeNull();
+    expect(selectLifeEvent(monetized, createEmptyEventProgress(), () => 0, [sponsor])?.id)
+      .toBe(sponsor.id);
+    expect(getChoiceUnavailableReason(unmonetized, premiumChoice)).toContain('dimonetisasi');
+
+    const sponsored = applyConsequence(monetized, premiumChoice.consequence);
+    expect(sponsored.cash).toBe(monetized.cash + 6_000_000);
+    expect(sponsored.netWorth).toBe(monetized.netWorth + 6_000_000);
+    expect(sponsored.digitalLife.accounts[0]).toMatchObject({
+      followers: 151_000,
+      totalViews: 110_000,
+    });
+    expect(sponsored.stats.reputation).toBe(monetized.stats.reputation + 3);
+    expect(sponsored.digitalLife.transactions[
+      sponsored.digitalLife.transactions.length - 1
+    ]).toMatchObject({
+      type: 'sponsor_income',
+      amount: 6_000_000,
+    });
   });
 
   it('schedules and applies a delayed consequence exactly once', () => {

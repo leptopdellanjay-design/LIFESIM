@@ -138,6 +138,40 @@ export const digitalContentCategories: Array<{ id: DigitalContentCategory; label
   { id: 'daily_life', label: 'Kehidupan sehari-hari' },
 ];
 
+export interface CreatorTitleDefinition {
+  id: string;
+  label: string;
+  minimumAudience: number;
+  minimumViews: number;
+  minimumIncome: number;
+  minimumContent: number;
+  minimumEngagement: number;
+}
+
+export const creatorTitleCatalog: CreatorTitleDefinition[] = [
+  { id: 'creator-starter', label: 'Kreator Pemula', minimumAudience: 0, minimumViews: 0, minimumIncome: 0, minimumContent: 1, minimumEngagement: 0 },
+  { id: 'creator-rising', label: 'Kreator Berkembang', minimumAudience: 1_000, minimumViews: 10_000, minimumIncome: 0, minimumContent: 5, minimumEngagement: 0.01 },
+  { id: 'creator-famous', label: 'Kreator Terkenal', minimumAudience: 10_000, minimumViews: 250_000, minimumIncome: 0, minimumContent: 15, minimumEngagement: 0.02 },
+  { id: 'digital-influencer', label: 'Influencer', minimumAudience: 50_000, minimumViews: 1_500_000, minimumIncome: 1_000_000, minimumContent: 30, minimumEngagement: 0.025 },
+  { id: 'digital-celebrity', label: 'Selebritas Digital', minimumAudience: 250_000, minimumViews: 5_000_000, minimumIncome: 10_000_000, minimumContent: 50, minimumEngagement: 0.03 },
+  { id: 'digital-icon', label: 'Ikon Digital', minimumAudience: 1_000_000, minimumViews: 20_000_000, minimumIncome: 100_000_000, minimumContent: 100, minimumEngagement: 0.04 },
+];
+
+export interface DigitalBankDefinition {
+  id: string;
+  name: string;
+  foundedYear: number;
+  openingFee: number;
+  annualInterestRate: number;
+  transferFee: number;
+}
+
+export const digitalBanks: DigitalBankDefinition[] = [
+  { id: 'bank-nusantara', name: 'Bank Nusantara', foundedYear: 1998, openingFee: 25_000, annualInterestRate: 0.025, transferFee: 2_500 },
+  { id: 'bank-merdeka', name: 'Bank Merdeka', foundedYear: 2005, openingFee: 10_000, annualInterestRate: 0.03, transferFee: 1_500 },
+  { id: 'bank-digital', name: 'Bank Digital', foundedYear: 2016, openingFee: 0, annualInterestRate: 0.04, transferFee: 1_000 },
+];
+
 export const socialAccountEligibilityAge = 13;
 
 export function getSmartphoneModel(modelId: string): SmartphoneModel | null {

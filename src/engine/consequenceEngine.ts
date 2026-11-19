@@ -14,6 +14,11 @@ import {
 } from './educationEngine';
 import { normalizeFamilyRecords } from './familyEngine';
 import { normalizeEconomyRecord } from './economyEngine';
+import {
+  normalizeDigitalLifeRecord,
+  recordDigitalTransaction,
+  unlockDigitalCreatorTitles,
+} from './digitalLifeEngine';
 
 const clamp = (value: number) => (
   Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0
@@ -24,6 +29,47 @@ const finite = (value: number | undefined) => (
 const nonNegative = (value: number) => (
   Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
 );
+
+function updateDigitalAccounts(
+  character: Character,
+  effects: NonNullable<ConsequencePayload['digitalAccountEffects']>,
+): Character['digitalLife'] {
+  let digitalLife = normalizeDigitalLifeRecord(character).digitalLife;
+  for (const effect of effects) {
+    const candidates = digitalLife.accounts.filter((account) => (
+      (!effect.accountId || account.id === effect.accountId)
+      && (!effect.platform || account.platform === effect.platform)
+      && (!effect.monetizedOnly || account.monetized)
+    ));
+    const target = effect.accountId
+      ? candidates[0]
+      : candidates.sort((left, right) => (
+        right.followers + right.subscribers - left.followers - left.subscribers
+      ))[0];
+    if (!target) continue;
+
+    const adjust = (value: number, change: number | undefined) => (
+      Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(value + finite(change))))
+    );
+    const audienceChange = finite(effect.audienceChange);
+    digitalLife = {
+      ...digitalLife,
+      accounts: digitalLife.accounts.map((account) => account.id === target.id ? {
+        ...account,
+        followers: adjust(
+          account.followers,
+          effect.followersChange ?? (account.platform === 'indotube' ? 0 : audienceChange),
+        ),
+        subscribers: adjust(
+          account.subscribers,
+          effect.subscribersChange ?? (account.platform === 'indotube' ? audienceChange : 0),
+        ),
+        totalViews: adjust(account.totalViews, effect.totalViewsChange),
+      } : account),
+    };
+  }
+  return digitalLife;
+}
 
 function updateFamilyMember(
   member: FamilyMember,
@@ -270,6 +316,9 @@ export function applyConsequence(
     ...updatedEducation,
     studyEffort: consequence.studyEffortChange ?? updatedEducation.studyEffort,
   };
+  const digitalLife = consequence.digitalAccountEffects
+    ? updateDigitalAccounts(character, consequence.digitalAccountEffects)
+    : character.digitalLife;
   const nextCharacter: Character = {
     ...character,
     stats,
@@ -293,9 +342,18 @@ export function applyConsequence(
           ? relationships.find((item) => item.stage === 'married')?.name ?? character.spouseName
           : character.spouseName,
     legalStatus: consequence.legalStatus ?? character.legalStatus,
+    digitalLife,
   };
   const withCareerChange = consequence.careerChange
     ? applyCareerChange(nextCharacter, consequence.careerChange)
     : nextCharacter;
-  return normalizeEconomyRecord(normalizeFamilyRecords(withCareerChange));
+  const finalized = normalizeEconomyRecord(normalizeFamilyRecords(withCareerChange));
+  if (!consequence.digitalAccountEffects || incomeChange <= 0) return finalized;
+  const withSponsorIncome = recordDigitalTransaction(
+      finalized,
+      'sponsor_income',
+      'Pendapatan kerja sama sponsor digital',
+      incomeChange,
+  );
+  return unlockDigitalCreatorTitles(withSponsorIncome).character;
 }

@@ -244,7 +244,7 @@ export interface AncestralRecord {
 export interface CharacterAsset {
   id: string;
   name: string;
-  category: 'home' | 'vehicle' | 'business' | 'investment' | 'device' | 'creator_gear' | 'other';
+  category: 'home' | 'vehicle' | 'business' | 'investment' | 'device' | 'creator_gear' | 'bank_deposit' | 'other';
   value: number;
   purchasePrice?: number;
   acquiredYear?: number;
@@ -301,6 +301,21 @@ export interface DigitalSocialAccount {
   createdMonth: number;
 }
 
+export interface DigitalCreatorTitle {
+  id: string;
+  label: string;
+  unlockedYear: number;
+  unlockedMonth: number;
+}
+
+export interface DigitalBankAccount {
+  id: string;
+  bankId: string;
+  accountNumber: string;
+  balance: number;
+  openedYear: number;
+}
+
 export interface DigitalContentRecord {
   id: string;
   accountId: string;
@@ -324,7 +339,19 @@ export interface DigitalTransaction {
   id: string;
   year: number;
   month: number;
-  type: 'phone_purchase' | 'phone_sale' | 'data_package' | 'creator_gear' | 'content_production' | 'creator_income';
+  type:
+    | 'phone_purchase'
+    | 'phone_sale'
+    | 'data_package'
+    | 'creator_gear'
+    | 'content_production'
+    | 'creator_income'
+    | 'sponsor_income'
+    | 'bank_open'
+    | 'bank_deposit'
+    | 'bank_withdrawal'
+    | 'bank_transfer'
+    | 'bank_interest';
   description: string;
   amount: number;
 }
@@ -334,6 +361,9 @@ export interface DigitalLifeRecord {
   accounts: DigitalSocialAccount[];
   content: DigitalContentRecord[];
   transactions: DigitalTransaction[];
+  creatorSkill: number;
+  creatorTitles: DigitalCreatorTitle[];
+  bankAccounts: DigitalBankAccount[];
 }
 
 export type BusinessKind = 'food_stall' | 'grocery' | 'craft_shop';
@@ -505,6 +535,27 @@ export interface StudyProgram {
   countryCode: string;
 }
 
+export type PostGraduationPath =
+  | 'undecided'
+  | 'college'
+  | 'work'
+  | 'gap_year'
+  | 'not_applicable';
+
+export type AdmissionStatus = 'not_started' | 'preparing' | 'failed' | 'admitted';
+
+export interface AdmissionRecord {
+  selectedUniversityId: string | null;
+  selectedProgramId: string | null;
+  preparation: number;
+  selfStudySessions: number;
+  tutoringSessions: number;
+  examAttempts: number;
+  lastExamScore: number | null;
+  lastExamYear: number | null;
+  status: AdmissionStatus;
+}
+
 export interface University {
   id: string;
   name: string;
@@ -515,6 +566,9 @@ export interface University {
   facilities: string[];
   accreditation: string;
   fictional: boolean;
+  officialUrl?: string;
+  admissionUrl?: string;
+  admissionDifficulty?: number;
 }
 
 export interface ScholarshipDefinition {
@@ -720,6 +774,8 @@ export interface Character {
   netWorth: number;
   educationRecord: EducationRecord;
   careerRecord: CareerRecord;
+  postGraduationPath?: PostGraduationPath;
+  admissionRecord?: AdmissionRecord;
   status: LifeStatus;
   stats: CharacterStats;
 }
@@ -772,6 +828,15 @@ export interface ConsequencePayload {
   relationshipEffects?: RelationshipEffect[];
   childrenAdded?: ChildRecord[];
   organizationChanges?: OrganizationMembership[];
+  digitalAccountEffects?: Array<{
+    accountId?: string;
+    platform?: DigitalPlatformId;
+    monetizedOnly?: boolean;
+    audienceChange?: number;
+    followersChange?: number;
+    subscribersChange?: number;
+    totalViewsChange?: number;
+  }>;
   legalStatus?: LegalStatus;
   relationshipChanges?: Array<{
     role: FamilyMemberRole | 'living_family';
@@ -821,6 +886,9 @@ export interface ChoiceRequirements {
   requiredMaritalStatuses?: MaritalStatus[];
   requiredLegalStatuses?: LegalStatus[];
   requiredOrganizationIds?: string[];
+  requiredDigitalPlatform?: DigitalPlatformId;
+  requiresMonetizedDigitalAccount?: boolean;
+  minDigitalAudience?: number;
 }
 
 export interface EventChoice {
@@ -891,6 +959,9 @@ export interface LifeEvent {
     maxPositionIndex?: number;
     requiresAvailablePromotion?: boolean;
   };
+  requiredDigitalPlatform?: DigitalPlatformId;
+  requiresMonetizedDigitalAccount?: boolean;
+  minDigitalAudience?: number;
   choices: EventChoice[];
 }
 

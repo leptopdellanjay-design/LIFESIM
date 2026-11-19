@@ -3,15 +3,24 @@ import { educationCareerEvents } from './educationCareerEvents';
 import { lifeEvents } from './lifeEvents';
 import { historicalEvents } from './historicalEvents';
 import { calendarEvents } from './calendarEvents';
+import { digitalEvents } from './digitalEvents';
 import type { LifeEvent } from '../../types/game';
 
-export { lifeEvents, extendedLifeEvents, educationCareerEvents, historicalEvents, calendarEvents };
+export {
+  lifeEvents,
+  extendedLifeEvents,
+  educationCareerEvents,
+  historicalEvents,
+  calendarEvents,
+  digitalEvents,
+};
 const eventCatalog: LifeEvent[] = [
   ...lifeEvents,
   ...extendedLifeEvents,
   ...educationCareerEvents,
   ...historicalEvents,
   ...calendarEvents,
+  ...digitalEvents,
 ];
 
 export const lifeEventLibrary = eventCatalog.map((event) => (

@@ -8,6 +8,7 @@ import type {
   DigitalPlatformId,
   EventProgress,
   LifeEvent,
+  PostGraduationPath,
   StudyEffort,
 } from '../types/game';
 import {
@@ -39,6 +40,15 @@ import {
   getChoiceUnavailableReason,
   recordEventChoice,
 } from '../engine/eventEngine';
+import {
+  beginCollegeAdmission as startCollegeAdmission,
+  choosePostGraduationPath as choosePostGraduationPathAction,
+  normalizePostGraduationRecords,
+  prepareForAdmission as prepareAdmissionAction,
+  selectAdmissionProgram as selectAdmissionProgramAction,
+  takeAdmissionTest as takeAdmissionTestAction,
+  type AdmissionPreparationActivity,
+} from '../engine/admissionEngine';
 import {
   DEFAULT_SAVE_SLOT_ID,
   createActiveGameIfAbsent,
@@ -93,9 +103,13 @@ import {
   buyMobileDataPackage as purchaseMobileDataPackage,
   buySmartphone as purchaseSmartphone,
   createSocialAccount as createDigitalSocialAccount,
+  depositToBank as depositDigitalBank,
   normalizeDigitalLifeRecord,
+  openBankAccount as openDigitalBankAccount,
   publishDigitalContent as publishDigitalContentAction,
   sellSmartphone as sellCharacterSmartphone,
+  transferBetweenBankAccounts as transferDigitalBankFunds,
+  withdrawFromBank as withdrawDigitalBankFunds,
 } from '../engine/digitalLifeEngine';
 
 export type PersistenceStatus = 'loading' | 'unsaved' | 'saving' | 'saved' | 'error';
@@ -122,6 +136,13 @@ interface GameState {
   chooseEventChoice: (choiceId: string) => Promise<boolean>;
   advanceMonth: (random?: () => number) => Promise<boolean>;
   advanceYear: (random?: () => number) => Promise<boolean>;
+  choosePostGraduationPath: (
+    path: Exclude<PostGraduationPath, 'undecided' | 'not_applicable'>,
+  ) => Promise<boolean>;
+  beginCollegeAdmission: () => Promise<boolean>;
+  selectAdmissionProgram: (universityId: string, programId: string) => Promise<boolean>;
+  prepareForAdmission: (activity: AdmissionPreparationActivity) => Promise<boolean>;
+  takeAdmissionTest: (random?: () => number) => Promise<boolean>;
   enrollInProgram: (programId: string, universityId: string) => Promise<boolean>;
   applyForScholarship: (scholarshipId: string) => Promise<boolean>;
   setStudyEffort: (effort: StudyEffort) => Promise<boolean>;
@@ -171,6 +192,14 @@ interface GameState {
     },
     random?: () => number,
   ) => Promise<boolean>;
+  openDigitalBankAccount: (bankId: string) => Promise<boolean>;
+  depositToDigitalBank: (accountId: string, amount: number) => Promise<boolean>;
+  withdrawFromDigitalBank: (accountId: string, amount: number) => Promise<boolean>;
+  transferDigitalBankFunds: (
+    sourceAccountId: string,
+    destinationAccountId: string,
+    amount: number,
+  ) => Promise<boolean>;
   setEstatePlan: (
     distribution: Character['estatePlan']['distribution'],
     namedHeirId?: string | null,
@@ -189,7 +218,8 @@ function restoreCharacter(character: Character): Character {
     education?: string;
     occupation?: string | null;
   };
-  const restored = normalizeDigitalLifeRecord(normalizeEconomyRecord(normalizeFamilyRecords({
+  const restored = normalizePostGraduationRecords(normalizeDigitalLifeRecord(
+    normalizeEconomyRecord(normalizeFamilyRecords({
     ...character,
     educationRecord: character.educationRecord
       ?? createEducationRecordFromLegacy(legacyCharacter.education, character.currentYear),
@@ -221,7 +251,7 @@ function restoreCharacter(character: Character): Character {
     spouseName: character.spouseName ?? null,
     legalStatus: character.legalStatus ?? 'clear',
     organizations: character.organizations ?? [],
-  })));
+  }))));
   return restored.status === 'deceased'
     ? settleEstateOnDeath(restored).character
     : restored;
@@ -475,7 +505,10 @@ export const useGameStore = create<GameState>((set, get) => {
       const game = {
         character,
         history: [
-          `${character.currentYear}: ${character.birthEvent.description}`,
+          `${Number(character.birthInformation.date.slice(0, 4))}: ${character.birthEvent.description}`,
+          ...(character.age >= 18
+            ? [`${character.currentYear}: Lulus SMA/SMK dan memulai simulasi kehidupan dewasa.`]
+            : []),
         ],
         activeEvent: null,
         eventProgress: createEmptyEventProgress(),
@@ -609,7 +642,8 @@ export const useGameStore = create<GameState>((set, get) => {
         || state.activeEvent
         || state.isAdvancing
         || state.persistenceStatus === 'saving'
-        || character.status !== 'alive') return false;
+        || character.status !== 'alive'
+        || character.postGraduationPath === 'undecided') return false;
 
       set({
         isAdvancing: true,
@@ -663,7 +697,8 @@ export const useGameStore = create<GameState>((set, get) => {
         || state.activeEvent
         || state.isAdvancing
         || state.persistenceStatus === 'saving'
-        || character.status !== 'alive') return false;
+        || character.status !== 'alive'
+        || character.postGraduationPath === 'undecided') return false;
 
       set({
         isAdvancing: true,
@@ -715,6 +750,34 @@ export const useGameStore = create<GameState>((set, get) => {
       }
     },
 
+    choosePostGraduationPath: async (path) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? choosePostGraduationPathAction(character, path) : null,
+      );
+    },
+    beginCollegeAdmission: async () => {
+      const character = get().character;
+      return commitCharacterAction(character ? startCollegeAdmission(character) : null);
+    },
+    selectAdmissionProgram: async (universityId, programId) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? selectAdmissionProgramAction(character, universityId, programId) : null,
+      );
+    },
+    prepareForAdmission: async (activity) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? prepareAdmissionAction(character, activity) : null,
+      );
+    },
+    takeAdmissionTest: async (random = Math.random) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character ? takeAdmissionTestAction(character, random) : null,
+      );
+    },
     enrollInProgram: async (programId, universityId) => {
       const character = get().character;
       return commitCharacterAction(character
@@ -897,6 +960,26 @@ export const useGameStore = create<GameState>((set, get) => {
       const character = get().character;
       return commitCharacterAction(
         character ? publishDigitalContentAction(character, input, random) : null,
+      );
+    },
+    openDigitalBankAccount: async (bankId) => {
+      const character = get().character;
+      return commitCharacterAction(character ? openDigitalBankAccount(character, bankId) : null);
+    },
+    depositToDigitalBank: async (accountId, amount) => {
+      const character = get().character;
+      return commitCharacterAction(character ? depositDigitalBank(character, accountId, amount) : null);
+    },
+    withdrawFromDigitalBank: async (accountId, amount) => {
+      const character = get().character;
+      return commitCharacterAction(character ? withdrawDigitalBankFunds(character, accountId, amount) : null);
+    },
+    transferDigitalBankFunds: async (sourceAccountId, destinationAccountId, amount) => {
+      const character = get().character;
+      return commitCharacterAction(
+        character
+          ? transferDigitalBankFunds(character, sourceAccountId, destinationAccountId, amount)
+          : null,
       );
     },
     continueAsHeir: async (childId) => {

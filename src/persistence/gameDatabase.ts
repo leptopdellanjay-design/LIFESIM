@@ -5,6 +5,7 @@ import { createCareerRecordFromLegacy } from '../engine/careerEngine';
 import { normalizeFamilyRecords } from '../engine/familyEngine';
 import { normalizeEconomyRecord } from '../engine/economyEngine';
 import { normalizeDigitalLifeRecord } from '../engine/digitalLifeEngine';
+import { normalizePostGraduationRecords } from '../engine/admissionEngine';
 
 export interface PersistedGame {
   id: string;
@@ -180,6 +181,22 @@ export class GameDatabase extends Dexie {
     }).upgrade(async (transaction) => {
       await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
         save.character = normalizeDigitalLifeRecord(save.character);
+      });
+    });
+    this.version(12).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        save.character = normalizeDigitalLifeRecord(save.character);
+      });
+    });
+    this.version(13).stores({
+      saves: 'id, updatedAt',
+      settings: 'id',
+    }).upgrade(async (transaction) => {
+      await transaction.table('saves').toCollection().modify((save: PersistedGame) => {
+        save.character = normalizePostGraduationRecords(save.character);
       });
     });
     this.saves = this.table('saves');

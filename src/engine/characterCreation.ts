@@ -15,7 +15,8 @@ import type {
   PersonalityTrait,
 } from '../types/game';
 import { createInitialCareerRecord } from './careerEngine';
-import { createInitialEducationRecord } from './educationEngine';
+import { createHighSchoolGraduateRecord, createInitialEducationRecord } from './educationEngine';
+import { createInitialAdmissionRecord } from './admissionEngine';
 import { randomParentOccupationId } from './familySupport';
 import { getNominalPriceFactor } from './worldEra';
 import { createInitialEconomyRecord } from './economyEngine';
@@ -284,6 +285,7 @@ export interface CreateCharacterOptions {
   today?: Date;
   idFactory?: () => string;
   random?: () => number;
+  startAge?: number;
 }
 
 export function createCharacterId(): string {
@@ -303,8 +305,14 @@ export function createCharacter(
   const country = getCountry(draft.countryCode);
   if (!country) throw new Error(`Negara belum didukung: ${draft.countryCode}`);
 
+  const startAge = options.startAge ?? 0;
+  if (!Number.isInteger(startAge) || startAge < 0 || startAge > 120) {
+    throw new Error('Usia awal harus berupa bilangan bulat antara 0 dan 120.');
+  }
   const birthYear = Number(draft.birthDate.slice(0, 4));
-  const nominalFactor = getNominalPriceFactor(birthYear);
+  const currentYear = birthYear + startAge;
+  const currentMonth = Number(draft.birthDate.slice(5, 7));
+  const nominalFactor = getNominalPriceFactor(currentYear);
   const cash = Math.max(1, Math.round(background.cashBase * nominalFactor));
   const nonCashValue = Math.round(background.nonCashBase * nominalFactor);
   const random = options.random ?? Math.random;
@@ -337,7 +345,7 @@ export function createCharacter(
     estatePlan: {
       distribution: 'equal_heirs',
       namedHeirId: null,
-      updatedYear: birthYear,
+      updatedYear: currentYear,
     },
     estateSettlement: null,
     identity: {
@@ -356,9 +364,9 @@ export function createCharacter(
       },
     },
     birthEvent,
-    currentYear: birthYear,
-    currentMonth: Number(draft.birthDate.slice(5, 7)),
-    age: 0,
+    currentYear,
+    currentMonth,
+    age: startAge,
     deathRecord: null,
     lastYearIncome: 0,
     lastYearExpenses: 0,
@@ -383,8 +391,12 @@ export function createCharacter(
     },
     cash,
     netWorth: cash + nonCashValue,
-    educationRecord: createInitialEducationRecord(),
+    educationRecord: startAge >= 18
+      ? createHighSchoolGraduateRecord(currentYear)
+      : createInitialEducationRecord(),
     careerRecord: createInitialCareerRecord(),
+    postGraduationPath: startAge >= 18 ? 'undecided' : 'not_applicable',
+    admissionRecord: createInitialAdmissionRecord(),
     status: 'alive',
     stats,
   };

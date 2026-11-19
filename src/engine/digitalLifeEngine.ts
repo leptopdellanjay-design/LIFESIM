@@ -1,7 +1,9 @@
 import {
   creatorEquipment,
+  creatorTitleCatalog,
   dataPackages,
   digitalApps,
+  digitalBanks,
   digitalPlatforms,
   getDigitalPlatform,
   getSmartphoneModel,
@@ -13,6 +15,8 @@ import type {
   DigitalAppId,
   DigitalContentCategory,
   DigitalContentPerformance,
+  DigitalBankAccount,
+  DigitalCreatorTitle,
   DigitalLifeRecord,
   DigitalPlatformId,
   DigitalSocialAccount,
@@ -50,6 +54,9 @@ export function createInitialDigitalLifeRecord(): DigitalLifeRecord {
     accounts: [],
     content: [],
     transactions: [],
+    creatorSkill: 0,
+    creatorTitles: [],
+    bankAccounts: [],
   };
 }
 
@@ -76,6 +83,27 @@ export function normalizeDigitalLifeRecord(character: Character): Character {
       accounts: Array.isArray(record.accounts) ? record.accounts : [],
       content: Array.isArray(record.content) ? record.content : [],
       transactions: Array.isArray(record.transactions) ? record.transactions : [],
+      creatorSkill: Number.isFinite(record.creatorSkill)
+        ? clamp(record.creatorSkill, 0, 100)
+        : 0,
+      creatorTitles: Array.isArray(record.creatorTitles)
+        ? record.creatorTitles.filter((title): title is DigitalCreatorTitle => (
+          typeof title?.id === 'string'
+          && typeof title.label === 'string'
+          && Number.isFinite(title.unlockedYear)
+          && Number.isFinite(title.unlockedMonth)
+        ))
+        : [],
+      bankAccounts: Array.isArray(record.bankAccounts)
+        ? record.bankAccounts.filter((account): account is DigitalBankAccount => (
+          typeof account?.id === 'string'
+          && typeof account.bankId === 'string'
+          && typeof account.accountNumber === 'string'
+          && Number.isFinite(account.balance)
+          && account.balance >= 0
+          && Number.isFinite(account.openedYear)
+        ))
+        : [],
     },
   };
 }
@@ -110,6 +138,8 @@ function addDigitalTransaction(
   };
 }
 
+export const recordDigitalTransaction = addDigitalTransaction;
+
 function calculateNetWorth(character: Character, cash: number, assets: Character['assets']): number {
   return Math.max(
     0,
@@ -124,6 +154,174 @@ function makePhoneNumber(characterId: string): string {
     (value * 31 + character.charCodeAt(0)) % 10_000_000
   ), 7_346_281);
   return `0812${String(hash).padStart(7, '0')}`;
+}
+
+function getBankAssetId(accountId: string): string {
+  return `bank-deposit-${accountId}`;
+}
+
+function makeBankAccountNumber(characterId: string, bankId: string): string {
+  const hash = [...`${characterId}:${bankId}`].reduce((value, character) => (
+    (value * 31 + character.charCodeAt(0)) % 10_000_000_000
+  ), 7_346_281);
+  return String(hash).padStart(10, '0');
+}
+
+export function openBankAccount(character: Character, bankId: string): DigitalActionResult | null {
+  const current = normalizeDigitalLifeRecord(character);
+  const bank = digitalBanks.find((item) => item.id === bankId);
+  if (!bank || character.status !== 'alive' || character.age < 18
+    || character.currentYear < bank.foundedYear
+    || character.cash < bank.openingFee
+    || current.digitalLife.bankAccounts.some((account) => account.bankId === bankId)) return null;
+
+  const account: DigitalBankAccount = {
+    id: `${character.id}:bank:${bank.id}`,
+    bankId: bank.id,
+    accountNumber: makeBankAccountNumber(character.id, bank.id),
+    balance: 0,
+    openedYear: character.currentYear,
+  };
+  const assets = [...character.assets, {
+    id: getBankAssetId(account.id),
+    name: `Simpanan ${bank.name}`,
+    category: 'bank_deposit' as const,
+    value: 0,
+    acquiredYear: character.currentYear,
+  }];
+  const nextCharacter = {
+    ...current,
+    cash: character.cash - bank.openingFee,
+    assets,
+    netWorth: calculateNetWorth(character, character.cash - bank.openingFee, assets),
+    lastYearExpenses: finiteAmount(character.lastYearExpenses + bank.openingFee),
+    digitalLife: {
+      ...current.digitalLife,
+      bankAccounts: [...current.digitalLife.bankAccounts, account],
+    },
+  };
+  return {
+    character: addDigitalTransaction(nextCharacter, 'bank_open', `Biaya pembukaan rekening ${bank.name}`, bank.openingFee),
+    historyText: `Membuka rekening di ${bank.name}.`,
+  };
+}
+
+export function depositToBank(
+  character: Character,
+  accountId: string,
+  amount: number,
+): DigitalActionResult | null {
+  const current = normalizeDigitalLifeRecord(character);
+  const account = current.digitalLife.bankAccounts.find((item) => item.id === accountId);
+  const asset = current.assets.find((item) => item.id === getBankAssetId(accountId));
+  const deposit = finiteAmount(amount);
+  if (!account || !asset || character.status !== 'alive'
+    || !Number.isSafeInteger(amount) || deposit <= 0
+    || character.cash < deposit || asset.value !== account.balance) return null;
+
+  const nextBalance = account.balance + deposit;
+  const assets = current.assets.map((item) => item.id === asset.id ? { ...item, value: nextBalance } : item);
+  const nextCharacter = {
+    ...current,
+    cash: character.cash - deposit,
+    assets,
+    netWorth: calculateNetWorth(character, character.cash - deposit, assets),
+    digitalLife: {
+      ...current.digitalLife,
+      bankAccounts: current.digitalLife.bankAccounts.map((item) => (
+        item.id === accountId ? { ...item, balance: nextBalance } : item
+      )),
+    },
+  };
+  return {
+    character: addDigitalTransaction(nextCharacter, 'bank_deposit', `Setoran ke rekening ${account.accountNumber}`, deposit),
+    historyText: `Menyetor ${deposit} ke rekening bank.`,
+  };
+}
+
+export function withdrawFromBank(
+  character: Character,
+  accountId: string,
+  amount: number,
+): DigitalActionResult | null {
+  const current = normalizeDigitalLifeRecord(character);
+  const account = current.digitalLife.bankAccounts.find((item) => item.id === accountId);
+  const asset = current.assets.find((item) => item.id === getBankAssetId(accountId));
+  const withdrawal = finiteAmount(amount);
+  if (!account || !asset || character.status !== 'alive'
+    || !Number.isSafeInteger(amount) || withdrawal <= 0
+    || account.balance < withdrawal || asset.value !== account.balance) return null;
+
+  const nextBalance = account.balance - withdrawal;
+  const assets = current.assets.map((item) => item.id === asset.id ? { ...item, value: nextBalance } : item);
+  const nextCharacter = {
+    ...current,
+    cash: character.cash + withdrawal,
+    assets,
+    netWorth: calculateNetWorth(character, character.cash + withdrawal, assets),
+    digitalLife: {
+      ...current.digitalLife,
+      bankAccounts: current.digitalLife.bankAccounts.map((item) => (
+        item.id === accountId ? { ...item, balance: nextBalance } : item
+      )),
+    },
+  };
+  return {
+    character: addDigitalTransaction(nextCharacter, 'bank_withdrawal', `Penarikan dari rekening ${account.accountNumber}`, withdrawal),
+    historyText: `Menarik ${withdrawal} dari rekening bank.`,
+  };
+}
+
+export function transferBetweenBankAccounts(
+  character: Character,
+  sourceAccountId: string,
+  destinationAccountId: string,
+  amount: number,
+): DigitalActionResult | null {
+  const current = normalizeDigitalLifeRecord(character);
+  const source = current.digitalLife.bankAccounts.find((item) => item.id === sourceAccountId);
+  const destination = current.digitalLife.bankAccounts.find((item) => item.id === destinationAccountId);
+  const sourceAsset = current.assets.find((item) => item.id === getBankAssetId(sourceAccountId));
+  const destinationAsset = current.assets.find((item) => item.id === getBankAssetId(destinationAccountId));
+  const transferAmount = finiteAmount(amount);
+  const sourceBank = source ? digitalBanks.find((item) => item.id === source.bankId) : null;
+  const fee = sourceBank?.transferFee ?? 0;
+  if (!source || !destination || !sourceAsset || !destinationAsset || !sourceBank
+    || sourceAccountId === destinationAccountId || character.status !== 'alive'
+    || !Number.isSafeInteger(amount) || transferAmount <= 0
+    || source.balance < transferAmount + fee
+    || sourceAsset.value !== source.balance || destinationAsset.value !== destination.balance) return null;
+
+  const sourceBalance = source.balance - transferAmount - fee;
+  const destinationBalance = destination.balance + transferAmount;
+  const assets = current.assets.map((item) => (
+    item.id === sourceAsset.id ? { ...item, value: sourceBalance }
+      : item.id === destinationAsset.id ? { ...item, value: destinationBalance }
+        : item
+  ));
+  const nextCharacter = {
+    ...current,
+    assets,
+    netWorth: calculateNetWorth(character, character.cash, assets),
+    lastYearExpenses: finiteAmount(character.lastYearExpenses + fee),
+    digitalLife: {
+      ...current.digitalLife,
+      bankAccounts: current.digitalLife.bankAccounts.map((item) => (
+        item.id === sourceAccountId ? { ...item, balance: sourceBalance }
+          : item.id === destinationAccountId ? { ...item, balance: destinationBalance }
+            : item
+      )),
+    },
+  };
+  return {
+    character: addDigitalTransaction(
+      nextCharacter,
+      'bank_transfer',
+      `Transfer ${transferAmount} ke rekening ${destination.accountNumber}; biaya ${fee}`,
+      transferAmount + fee,
+    ),
+    historyText: `Mentransfer ${transferAmount} antar rekening dengan biaya ${fee}.`,
+  };
 }
 
 export function buySmartphone(
@@ -413,8 +611,9 @@ function getCreatorQuality(character: Character, smartphone: SmartphoneRecord): 
     total + (asset.category === 'creator_gear' ? asset.equipmentQuality ?? 0 : 0)
   ), 0));
   return clamp(
-    deviceModel.creatorQuality * 0.55
+    deviceModel.creatorQuality * 0.45
       + character.stats.intelligence * 0.25
+      + (character.digitalLife?.creatorSkill ?? 0) * 0.2
       + equipmentQuality,
     0,
     100,
@@ -541,9 +740,14 @@ export function publishDigitalContent(
       ],
     }
     : character.careerRecord;
-  const historyText = `Mengunggah "${title}" ke ${platform.name}; ${views} tayangan, ${newFollowers} audiens baru${revenue > 0 ? `, pendapatan ${revenue}` : ''}.`;
+  let historyText = `Mengunggah "${title}" ke ${platform.name}; ${views} tayangan, ${newFollowers} audiens baru${revenue > 0 ? `, pendapatan ${revenue}` : ''}.`;
   const nextDigitalLife: DigitalLifeRecord = {
     ...current.digitalLife,
+    creatorSkill: clamp(
+      current.digitalLife.creatorSkill + (performance === 'viral' ? 3 : performance === 'trending' ? 2 : 1),
+      0,
+      100,
+    ),
     smartphone: {
       ...smartphone,
       dataPlan: { ...dataPlan, remainingMb: dataPlan.remainingMb - platform.uploadDataMb },
@@ -579,21 +783,70 @@ export function publishDigitalContent(
       revenue,
     );
   }
+  const progression = unlockDigitalCreatorTitles(nextCharacter);
+  nextCharacter = progression.character;
+  if (progression.newlyUnlocked.length > 0) {
+    historyText += ` Gelar baru terbuka: ${progression.newlyUnlocked.map((item) => item.label).join(', ')}.`;
+  }
 
   return { character: nextCharacter, historyText };
 }
 
-export function getDigitalCreatorLevel(character: Character): string {
-  const totalAudience = character.digitalLife.accounts.reduce((total, account) => (
+function getEligibleCreatorTitles(character: Character) {
+  const digitalLife = normalizeDigitalLifeRecord(character).digitalLife;
+  const totalAudience = digitalLife.accounts.reduce((total, account) => (
     total + account.followers + account.subscribers
   ), 0);
-  if (totalAudience >= 1_000_000) return 'Internet Legend';
-  if (totalAudience >= 250_000) return 'Celebrity';
-  if (totalAudience >= 100_000) return 'Top Influencer';
-  if (totalAudience >= 50_000) return 'Influencer';
-  if (totalAudience >= 10_000) return 'Rising Star';
-  if (totalAudience >= 1_000) return 'Emerging Creator';
-  return 'Pemula';
+  const totalViews = digitalLife.accounts.reduce((total, account) => total + account.totalViews, 0);
+  const creatorIncome = digitalLife.transactions.reduce((total, transaction) => (
+    transaction.type === 'creator_income' || transaction.type === 'sponsor_income'
+      ? total + transaction.amount
+      : total
+  ), 0);
+  const averageEngagement = digitalLife.content.length > 0
+    ? digitalLife.content.reduce((total, item) => total + item.engagementRate, 0) / digitalLife.content.length
+    : 0;
+
+  return creatorTitleCatalog.filter((title) => (
+    totalAudience >= title.minimumAudience
+    && totalViews >= title.minimumViews
+    && creatorIncome >= title.minimumIncome
+    && digitalLife.content.length >= title.minimumContent
+    && averageEngagement >= title.minimumEngagement
+  ));
+}
+
+export function unlockDigitalCreatorTitles(character: Character): {
+  character: Character;
+  newlyUnlocked: DigitalCreatorTitle[];
+} {
+  const current = normalizeDigitalLifeRecord(character);
+  const earnedTitleIds = new Set(current.digitalLife.creatorTitles.map((item) => item.id));
+  const newlyUnlocked = getEligibleCreatorTitles(current)
+    .filter((title) => !earnedTitleIds.has(title.id))
+    .map((title): DigitalCreatorTitle => ({
+      id: title.id,
+      label: title.label,
+      unlockedYear: character.currentYear,
+      unlockedMonth: character.currentMonth,
+    }));
+  if (newlyUnlocked.length === 0) return { character: current, newlyUnlocked };
+
+  return {
+    character: {
+      ...current,
+      digitalLife: {
+        ...current.digitalLife,
+        creatorTitles: [...current.digitalLife.creatorTitles, ...newlyUnlocked],
+      },
+    },
+    newlyUnlocked,
+  };
+}
+
+export function getDigitalCreatorLevel(character: Character): string {
+  const titles = normalizeDigitalLifeRecord(character).digitalLife.creatorTitles;
+  return titles[titles.length - 1]?.label ?? 'Belum ada gelar';
 }
 
 export function processDigitalLifeMonth(character: Character): {
@@ -602,25 +855,70 @@ export function processDigitalLifeMonth(character: Character): {
 } {
   const current = normalizeDigitalLifeRecord(character);
   const smartphone = current.digitalLife.smartphone;
-  if (!smartphone) return { character: current, historyEntries: [] };
-  const currentIndex = monthIndex(character.currentYear, character.currentMonth);
-  const expiredPlan = smartphone.dataPlan
-    && smartphone.dataPlan.expiresAtMonthIndex <= currentIndex;
-  const dataPlan = expiredPlan ? null : smartphone.dataPlan;
-  const updatedPhone: SmartphoneRecord = {
-    ...smartphone,
-    condition: Math.max(0, smartphone.condition - 0.1),
-    dataPlan,
-    installedApps: initialInstalledApps(character.currentYear),
-  };
-  const historyEntries = expiredPlan
-    ? [`${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: Paket data ponsel telah berakhir.`]
-    : [];
-  return {
-    character: {
+  const historyEntries: string[] = [];
+  let nextCharacter = current;
+  if (smartphone) {
+    const currentIndex = monthIndex(character.currentYear, character.currentMonth);
+    const expiredPlan = smartphone.dataPlan
+      && smartphone.dataPlan.expiresAtMonthIndex <= currentIndex;
+    const updatedPhone: SmartphoneRecord = {
+      ...smartphone,
+      condition: Math.max(0, smartphone.condition - 0.1),
+      dataPlan: expiredPlan ? null : smartphone.dataPlan,
+      installedApps: initialInstalledApps(character.currentYear),
+    };
+    nextCharacter = {
       ...current,
       digitalLife: { ...current.digitalLife, smartphone: updatedPhone },
-    },
+    };
+    if (expiredPlan) {
+      historyEntries.push(`${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: Paket data ponsel telah berakhir.`);
+    }
+  }
+
+  const accruedInterest: Array<{ account: DigitalBankAccount; amount: number }> = [];
+  let bankAccounts = nextCharacter.digitalLife.bankAccounts;
+  let assets = nextCharacter.assets;
+  for (const account of bankAccounts) {
+    const bank = digitalBanks.find((item) => item.id === account.bankId);
+    const asset = assets.find((item) => item.id === getBankAssetId(account.id));
+    if (!bank || !asset || asset.value !== account.balance || account.balance <= 0) continue;
+
+    const interest = finiteAmount(account.balance * (Math.pow(1 + bank.annualInterestRate, 1 / 12) - 1));
+    if (interest <= 0) continue;
+    const newBalance = account.balance + interest;
+    bankAccounts = bankAccounts.map((item) => (
+      item.id === account.id ? { ...item, balance: newBalance } : item
+    ));
+    assets = assets.map((item) => item.id === asset.id ? { ...item, value: newBalance } : item);
+    accruedInterest.push({ account, amount: interest });
+    historyEntries.push(`${character.currentYear}-${String(character.currentMonth).padStart(2, '0')}: Bunga tabungan ${bank.name} bertambah ${interest}.`);
+  }
+
+  if (accruedInterest.length > 0) {
+    const totalInterest = accruedInterest.reduce((total, item) => total + item.amount, 0);
+    nextCharacter = {
+      ...nextCharacter,
+      assets,
+      netWorth: calculateNetWorth(nextCharacter, nextCharacter.cash, assets),
+      lastYearIncome: finiteAmount(nextCharacter.lastYearIncome + totalInterest),
+      digitalLife: {
+        ...nextCharacter.digitalLife,
+        bankAccounts,
+      },
+    };
+    for (const { account, amount } of accruedInterest) {
+      nextCharacter = addDigitalTransaction(
+        nextCharacter,
+        'bank_interest',
+        `Bunga tabungan rekening ${account.accountNumber}`,
+        amount,
+      );
+    }
+  }
+
+  return {
+    character: nextCharacter,
     historyEntries,
   };
 }
